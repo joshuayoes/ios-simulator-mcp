@@ -4,10 +4,7 @@
 
 A Model Context Protocol (MCP) server for interacting with iOS simulators. This server allows you to interact with iOS simulators by getting information about them, controlling UI interactions, and inspecting UI elements.
 
-
 https://github.com/user-attachments/assets/453ebe7b-cc93-4ac2-b08d-0f8ac8339ad3
-
-
 
 ## Features
 
@@ -64,20 +61,21 @@ After a feature implementation:
   ```
 
 - **Take Screenshot:**
+
   ```
   Take a screenshot of the current simulator screen and save it to my_screenshot.png
   ```
 
 - **Record Video:**
+
   ```
-  Start recording a video of the simulator screen (saves to ~/Downloads/simulator_recording.mp4 by default)
+  Start recording a video of the simulator screen (saves to ~/Downloads/simulator_recording_$DATE.mp4 by default)
   ```
 
 - **Stop Recording:**
   ```
   Stop the current simulator screen recording
   ```
-
 
 ## Prerequisites
 

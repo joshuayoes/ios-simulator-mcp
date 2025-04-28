@@ -1,6 +1,7 @@
 # iOS Simulator MCP Server
 
 [![NPM Version](https://img.shields.io/npm/v/ios-simulator-mcp)](https://www.npmjs.com/package/ios-simulator-mcp)
+[![smithery badge](https://smithery.ai/badge/@joshuayoes/ios-simulator-mcp)](https://smithery.ai/server/@joshuayoes/ios-simulator-mcp)
 
 A Model Context Protocol (MCP) server for interacting with iOS simulators. This server allows you to interact with iOS simulators by getting information about them, controlling UI interactions, and inspecting UI elements.
 
@@ -95,6 +96,14 @@ After a feature implementation, instruct your AI assistant within its MCP client
 ## Installation
 
 This section provides instructions for integrating the iOS Simulator MCP server with different Model Context Protocol (MCP) clients.
+
+### Installing via Smithery
+
+To install iOS Simulator for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@joshuayoes/ios-simulator-mcp):
+
+```bash
+npx -y @smithery/cli install @joshuayoes/ios-simulator-mcp --client claude
+```
 
 ### Installation with Cursor
 

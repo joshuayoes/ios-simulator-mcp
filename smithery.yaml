@@ -1,0 +1,29 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    properties:
+      filteredTools:
+        type: array
+        items:
+          type: string
+        default: []
+        description: List of tool names to filter out
+  commandFunction:
+    # A JS function that produces the CLI command based on the given config to start the MCP on stdio.
+    |-
+    (config) => {
+      const args = [];
+      const env = {};
+      if (config.filteredTools && config.filteredTools.length) {
+        env.IOS_SIMULATOR_MCP_FILTERED_TOOLS = config.filteredTools.join(',');
+      }
+      return { command: 'node', args: ['build/index.js'], env };
+    }
+  exampleConfig:
+    filteredTools:
+      - screenshot
+      - record_video

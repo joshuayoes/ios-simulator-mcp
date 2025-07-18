@@ -446,6 +446,25 @@ if (!isToolFiltered("ui_view")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
+        // Get screen dimensions in points from ui_describe_all
+        const { stdout: uiDescribeOutput } = await run("idb", [
+          "ui",
+          "describe-all",
+          "--udid",
+          actualUdid,
+          "--json",
+          "--nested",
+        ]);
+
+        const uiData = JSON.parse(uiDescribeOutput);
+        const screenFrame = uiData[0]?.frame;
+        if (!screenFrame) {
+          throw new Error("Could not determine screen dimensions");
+        }
+
+        const pointWidth = screenFrame.width;
+        const pointHeight = screenFrame.height;
+
         // Generate unique file names with timestamp
         const ts = Date.now();
         const rawPng = path.join(TMP_ROOT_DIR, `ui-view-${ts}-raw.png`);
@@ -465,10 +484,11 @@ if (!isToolFiltered("ui_view")) {
           rawPng,
         ]);
 
-        // Compress to JPEG using sips
+        // Resize to match point dimensions and compress to JPEG using sips
         await run("sips", [
-          "-Z",
-          "1568", // max 1568 px tall
+          "-z",
+          String(pointHeight), // height in points
+          String(pointWidth),  // width in points
           "-s",
           "format",
           "jpeg",

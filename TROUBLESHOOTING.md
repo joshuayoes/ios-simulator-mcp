@@ -78,6 +78,7 @@ The installation section in [IDB](https://fbidb.io/docs/installation/) is a litt
 ### Simulator UI Not Responding
 - Restart the simulator and try again.
 - Quit and relaunch Xcode if needed.
+- Prompt AI to check dimensions of the simulator screen and adjust coordinates to it. Screenshots have 3x resolution and this may result in incorrect position of screen presses.
 
 ## 4. Still Stuck?
 - Check the [README](./README.md) for setup and usage instructions.

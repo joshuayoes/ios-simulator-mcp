@@ -186,6 +186,63 @@ Claude Code CLI can manage MCP servers using the `claude mcp` commands or by edi
     **Important:** Replace `/full/path/to/your/` with the absolute path to where you cloned the `ios-simulator-mcp` repository.
 3.  Restart any running Claude Code sessions if necessary.
 
+## Testing
+
+This project includes comprehensive tests for all image-related functionality. The tests verify that the MCP server correctly returns image content in the proper format.
+
+### Prerequisites
+
+1. **iOS Simulator**: Make sure you have an iOS simulator running before running tests
+2. **Build**: Ensure the project is built (`npm run build`)
+
+### Running Tests
+
+```bash
+# Build the project (if not already built)
+npm run build
+
+# Run the test suite
+npm test
+```
+
+### What the Tests Cover
+
+- **Pre-flight checks**: Verifies simulator is running and build exists
+- **Core functionality**: Tests getting booted simulator ID
+- **Image content validation**: Tests all image-returning tools:
+  - `ui_view` - Compressed JPEG screenshot for quick viewing
+  - `screenshot` - Direct image content in PNG/JPEG formats with optional compression
+
+### Test Output
+
+The tests will:
+- Validate that image content is properly base64-encoded
+- Check correct MIME types are returned
+- Verify image data integrity
+- Save test images to `/tmp/ios-simulator-mcp-test/` for manual verification
+- Provide detailed pass/fail reporting with timing information
+
+Example test output:
+```
+🚀 Starting iOS Simulator MCP Server Tests
+
+🧪 Running test: Pre-flight: Check build exists
+  ✓ Build exists
+✅ Pre-flight: Check build exists - PASSED (2ms)
+
+🧪 Running test: UI view (compressed JPEG)
+  📸 Test image saved to: /tmp/ios-simulator-mcp-test/ui_view_test.jpg
+✅ UI view (compressed JPEG) - PASSED (1543ms)
+
+==================================================
+TEST SUMMARY
+==================================================
+Total tests: 4
+Passed: 4
+Failed: 0
+Total time: 2890ms
+```
+
 ## License
 
 MIT

@@ -434,7 +434,7 @@ if (!isToolFiltered("ui_describe_point")) {
 if (!isToolFiltered("ui_view")) {
   server.tool(
     "ui_view",
-    "Get the image content of a compressed screenshot of the current simulator view",
+    "Get a compressed JPEG screenshot of the current simulator view optimized for quick viewing and analysis",
     {
       udid: z
         .string()
@@ -484,6 +484,14 @@ if (!isToolFiltered("ui_view")) {
         const imageData = fs.readFileSync(compressedJpg);
         const base64Data = imageData.toString("base64");
 
+        // Clean up temporary files
+        try {
+          fs.unlinkSync(rawPng);
+          fs.unlinkSync(compressedJpg);
+        } catch (cleanupError) {
+          // Ignore cleanup errors
+        }
+
         return {
           isError: false,
           content: [
@@ -525,32 +533,25 @@ function ensureAbsolutePath(filePath: string): string {
     return path.join(os.homedir(), filePath.slice(2));
   }
 
-  // For relative paths, use ~/Downloads as default directory
-  return path.join(os.homedir(), "Downloads", filePath);
+  // For relative paths, use current working directory as default
+  return path.join(process.cwd(), filePath);
 }
 
 if (!isToolFiltered("screenshot")) {
   server.tool(
     "screenshot",
-    "Takes a screenshot of the iOS Simulator",
+    "Takes a screenshot of the iOS Simulator and returns the image content directly",
     {
       udid: z
         .string()
         .regex(UDID_REGEX)
         .optional()
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      output_path: z
-        .string()
-        .max(1024)
-        .describe(
-          "File path where the screenshot will be saved (if relative, ~/Downloads will be used as base directory)"
-        ),
       type: z
-        .enum(["png", "tiff", "bmp", "gif", "jpeg"])
+        .enum(["png", "jpeg"])
         .optional()
-        .describe(
-          "Image format (png, tiff, bmp, gif, or jpeg). Default is png."
-        ),
+        .default("png")
+        .describe("Image format (png or jpeg). Default is png."),
       display: z
         .enum(["internal", "external"])
         .optional()
@@ -563,39 +564,79 @@ if (!isToolFiltered("screenshot")) {
         .describe(
           "For non-rectangular displays, handle the mask by policy (ignored, alpha, or black)"
         ),
+      compress: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true and type is jpeg, compress the image for better performance"),
     },
-    async ({ udid, output_path, type, display, mask }) => {
+    async ({ udid, type = "png", display, mask, compress }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
-        const absolutePath = ensureAbsolutePath(output_path);
 
-        // command is weird, it responds with stderr on success and stdout is blank
-        const { stderr: stdout } = await run("xcrun", [
+        // Generate unique file name with timestamp
+        const ts = Date.now();
+        const tempFile = path.join(TMP_ROOT_DIR, `screenshot-${ts}.${type}`);
+
+        // Capture screenshot
+        await run("xcrun", [
           "simctl",
           "io",
           actualUdid,
           "screenshot",
-          ...(type ? [`--type=${type}`] : []),
+          `--type=${type}`,
           ...(display ? [`--display=${display}`] : []),
           ...(mask ? [`--mask=${mask}`] : []),
-          // When passing user-provided values to a command, it's crucial to use `--`
-          // to separate the command's options from positional arguments.
-          // This prevents the shell from misinterpreting the arguments as options.
           "--",
-          absolutePath,
+          tempFile,
         ]);
 
-        // throw if we don't get the expected success message
-        if (stdout && !stdout.includes("Wrote screenshot to")) {
-          throw new Error(stdout);
+        let finalFile = tempFile;
+        let finalMimeType = type === "jpeg" ? "image/jpeg" : "image/png";
+
+        // If compression is requested and type is jpeg, compress it
+        if (compress && type === "jpeg") {
+          const compressedFile = path.join(TMP_ROOT_DIR, `screenshot-${ts}-compressed.jpg`);
+          
+          await run("sips", [
+            "-Z",
+            "1568", // max 1568 px tall
+            "-s",
+            "formatOptions",
+            "80", // 80% quality
+            tempFile,
+            "--out",
+            compressedFile,
+          ]);
+          
+          finalFile = compressedFile;
+        }
+
+        // Read and encode the image
+        const imageData = fs.readFileSync(finalFile);
+        const base64Data = imageData.toString("base64");
+
+        // Clean up temporary files
+        try {
+          fs.unlinkSync(tempFile);
+          if (finalFile !== tempFile) {
+            fs.unlinkSync(finalFile);
+          }
+        } catch (cleanupError) {
+          // Ignore cleanup errors
         }
 
         return {
           isError: false,
           content: [
             {
+              type: "image",
+              data: base64Data,
+              mimeType: finalMimeType,
+            },
+            {
               type: "text",
-              text: stdout,
+              text: `Screenshot captured as ${type}${compress && type === "jpeg" ? " (compressed)" : ""}`,
             },
           ],
         };

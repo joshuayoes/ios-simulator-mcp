@@ -488,7 +488,7 @@ if (!isToolFiltered("ui_view")) {
         await run("sips", [
           "-z",
           String(pointHeight), // height in points
-          String(pointWidth),  // width in points
+          String(pointWidth), // width in points
           "-s",
           "format",
           "jpeg",
@@ -540,13 +540,26 @@ function ensureAbsolutePath(filePath: string): string {
     return filePath;
   }
 
-  // Handle ~/something paths
+  // Handle ~/something paths in the provided filePath
   if (filePath.startsWith("~/")) {
     return path.join(os.homedir(), filePath.slice(2));
   }
 
-  // For relative paths, use ~/Downloads as default directory
-  return path.join(os.homedir(), "Downloads", filePath);
+  // Determine the default directory from env var or fallback to ~/Downloads
+  let defaultDir = path.join(os.homedir(), "Downloads");
+  const customDefaultDir = process.env.IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR;
+
+  if (customDefaultDir) {
+    // also expand tilde for the custom directory path
+    if (customDefaultDir.startsWith("~/")) {
+      defaultDir = path.join(os.homedir(), customDefaultDir.slice(2));
+    } else {
+      defaultDir = customDefaultDir;
+    }
+  }
+
+  // Join the relative filePath with the resolved default directory
+  return path.join(defaultDir, filePath);
 }
 
 if (!isToolFiltered("screenshot")) {
@@ -563,7 +576,7 @@ if (!isToolFiltered("screenshot")) {
         .string()
         .max(1024)
         .describe(
-          "File path where the screenshot will be saved (if relative, ~/Downloads will be used as base directory)"
+          "File path where the screenshot will be saved. If relative, it uses the directory specified by the `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` env var, or `~/Downloads` if not set."
         ),
       type: z
         .enum(["png", "tiff", "bmp", "gif", "jpeg"])
@@ -646,7 +659,7 @@ if (!isToolFiltered("record_video")) {
         .max(1024)
         .optional()
         .describe(
-          `Optional output path (defaults to ~/Downloads/simulator_recording_$DATE.mp4)`
+          `Optional output path. If not provided, a default name will be used. The file will be saved in the directory specified by \`IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR\` or in \`~/Downloads\` if the environment variable is not set.`
         ),
       codec: z
         .enum(["h264", "hevc"])

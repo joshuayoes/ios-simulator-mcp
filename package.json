@@ -1,6 +1,6 @@
 {
   "name": "ios-simulator-mcp",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "MCP server for interacting with the iOS simulator",
   "bin": {
     "ios-simulator-mcp": "./build/index.js"

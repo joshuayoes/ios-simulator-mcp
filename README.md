@@ -21,12 +21,6 @@ https://github.com/user-attachments/assets/453ebe7b-cc93-4ac2-b08d-0f8ac8339ad3
   - Show a view of the simulator screen to your AI agent
 - Filter specific tools using environment variables
 
-## Configuration
-
-### Environment Variables
-
-- `IOS_SIMULATOR_MCP_FILTERED_TOOLS`: A comma-separated list of tool names to filter out from being registered. For example: `screenshot,record_video,stop_recording`
-
 ## 💡 Use Case: QA Step via MCP Tool Calls
 
 This MCP server allows AI assistants integrated with a Model Context Protocol (MCP) client to perform Quality Assurance tasks by making tool calls. This is useful immediately after implementing features to help ensure UI consistency and correct behavior.
@@ -82,7 +76,7 @@ After a feature implementation, instruct your AI assistant within its MCP client
 - **Record Video:**
 
   ```
-  Start recording a video of the simulator screen (saves to ~/Downloads/simulator_recording_$DATE.mp4 by default)
+  Start recording a video of the simulator screen (saves to the default output directory, which is `~/Downloads` unless overridden by `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR`)
   ```
 
 - **Stop Recording:**
@@ -182,6 +176,32 @@ Claude Code CLI can manage MCP servers using the `claude mcp` commands or by edi
     **Important:** Replace `/full/path/to/your/` with the absolute path to where you cloned the `ios-simulator-mcp` repository.
 3.  Restart any running Claude Code sessions if necessary.
 
+## Configuration
+
+### Environment Variables
+
+| Variable                               | Description                                                                                                                                                                                          | Example                                  |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `IOS_SIMULATOR_MCP_FILTERED_TOOLS`     | A comma-separated list of tool names to filter out from being registered.                                                                                                                            | `screenshot,record_video,stop_recording` |
+| `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` | Specifies a default directory for output files like screenshots and video recordings. If not set, `~/Downloads` will be used. This can be handy if your agent has limited access to the file system. | `~/Code/awesome-project/tmp`             |
+
+#### Configuration Example
+
+```json
+{
+  "mcpServers": {
+    "ios-simulator": {
+      "command": "npx",
+      "args": ["-y", "ios-simulator-mcp"],
+      "env": {
+        "IOS_SIMULATOR_MCP_FILTERED_TOOLS": "screenshot,record_video,stop_recording",
+        "IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR": "~/Code/awesome-project/tmp"
+      }
+    }
+  }
+}
+```
+
 ## MCP Registry Server Listings
 
 <a href="https://glama.ai/mcp/servers/@joshuayoes/ios-simulator-mcp">
@@ -189,7 +209,6 @@ Claude Code CLI can manage MCP servers using the `claude mcp` commands or by edi
 </a>
 
 [![MseeP.ai Security Assessment Badge](https://mseep.net/pr/joshuayoes-ios-simulator-mcp-badge.png)](https://mseep.ai/app/joshuayoes-ios-simulator-mcp)
-
 
 ## License
 

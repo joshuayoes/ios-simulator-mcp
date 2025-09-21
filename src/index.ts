@@ -151,6 +151,40 @@ if (!isToolFiltered("get_booted_sim_id")) {
   );
 }
 
+if (!isToolFiltered("open_simulator")) {
+  server.tool(
+    "open_simulator",
+    "Opens the iOS Simulator application",
+    async () => {
+      try {
+        await run("open", ["-a", "Simulator.app"]);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: "Simulator.app opened successfully",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error opening Simulator.app: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
 if (!isToolFiltered("ui_describe_all")) {
   server.tool(
     "ui_describe_all",

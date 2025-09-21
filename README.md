@@ -25,6 +25,12 @@ This project has been featured and mentioned in various publications and resourc
 
 **Parameters:** No Parameters
 
+### `open_simulator`
+
+**Description:** Opens the iOS Simulator application
+
+**Parameters:** No Parameters
+
 ### `ui_describe_all`
 
 **Description:** Describes accessibility information for the entire screen in the iOS Simulator

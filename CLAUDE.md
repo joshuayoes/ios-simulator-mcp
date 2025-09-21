@@ -49,6 +49,8 @@ The server provides these tools (can be filtered via environment variables):
 - `screenshot` - Save screenshot to file
 - `record_video` - Start video recording
 - `stop_recording` - Stop video recording
+- `install_app` - Install an app bundle (.app or .ipa) on the simulator
+- `launch_app` - Launch an app by bundle identifier
 
 ## Testing
 

@@ -6,6 +6,8 @@ You can run a test case copy and pasting the test case into a chat in an MCP cli
 
 ## Test Case: Photos app
 
+**Note:** This test case was written using iOS 17.2 and the native Photos app. It may need to be adjusted for other iOS versions or Photos app changes.
+
 1. Have the user open the native Photo app in the iOS simulator.
 2. Call `get_booted_sim_id` to get the UDID of the booted simulator.
 3. Call `record_video` to start recording a screen recording of the test.

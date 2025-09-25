@@ -318,6 +318,11 @@ if (!isToolFiltered("ui_swipe")) {
     "ui_swipe",
     "Swipe on the screen in the iOS Simulator",
     {
+      duration: z
+        .string()
+        .regex(/^\d+(\.\d+)?$/)
+        .optional()
+        .describe("Swipe duration in seconds (e.g., 0.1)"),
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -333,7 +338,7 @@ if (!isToolFiltered("ui_swipe")) {
         .describe("The size of each step in the swipe (default is 1)")
         .default(1),
     },
-    async ({ udid, x_start, y_start, x_end, y_end, delta }) => {
+    async ({ duration, udid, x_start, y_start, x_end, y_end, delta }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
@@ -342,6 +347,7 @@ if (!isToolFiltered("ui_swipe")) {
           "swipe",
           "--udid",
           actualUdid,
+          ...(duration ? ["--duration", duration] : []),
           ...(delta ? ["--delta", String(delta)] : []),
           "--json",
           // When passing user-provided values to a command, it's crucial to use `--`

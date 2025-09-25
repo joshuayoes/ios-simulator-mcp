@@ -95,6 +95,10 @@ This project has been featured and mentioned in various publications and resourc
 ```typescript
 {
   /**
+   * Swipe duration in seconds (decimal numbers allowed)
+   */
+  duration?: string;
+  /**
    * Udid of target, can also be set with the IDB_UDID env var
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */

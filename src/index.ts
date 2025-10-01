@@ -151,6 +151,40 @@ if (!isToolFiltered("get_booted_sim_id")) {
   );
 }
 
+if (!isToolFiltered("open_simulator")) {
+  server.tool(
+    "open_simulator",
+    "Opens the iOS Simulator application",
+    async () => {
+      try {
+        await run("open", ["-a", "Simulator.app"]);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: "Simulator.app opened successfully",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error opening Simulator.app: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
 if (!isToolFiltered("ui_describe_all")) {
   server.tool(
     "ui_describe_all",
@@ -792,6 +826,148 @@ if (!isToolFiltered("stop_recording")) {
               type: "text",
               text: errorWithTroubleshooting(
                 `Error stopping recording: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("install_app")) {
+  server.tool(
+    "install_app",
+    "Installs an app bundle (.app or .ipa) on the iOS Simulator",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      app_path: z
+        .string()
+        .max(1024)
+        .describe(
+          "Path to the app bundle (.app directory or .ipa file) to install"
+        ),
+    },
+    async ({ udid, app_path }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+        const absolutePath = path.isAbsolute(app_path)
+          ? app_path
+          : path.resolve(app_path);
+
+        // Check if the app bundle exists
+        if (!fs.existsSync(absolutePath)) {
+          throw new Error(`App bundle not found at: ${absolutePath}`);
+        }
+
+        // run() will throw if the command fails (non-zero exit code)
+        await run("xcrun", [
+          "simctl",
+          "install",
+          actualUdid,
+          absolutePath,
+        ]);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `App installed successfully from: ${absolutePath}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error installing app: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("launch_app")) {
+  server.tool(
+    "launch_app",
+    "Launches an app on the iOS Simulator by bundle identifier",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      bundle_id: z
+        .string()
+        .max(256)
+        .describe(
+          "Bundle identifier of the app to launch (e.g., com.apple.mobilesafari)"
+        ),
+      wait_for_debugger: z
+        .boolean()
+        .optional()
+        .describe("Wait for debugger to attach before launching"),
+      console: z
+        .boolean()
+        .optional()
+        .describe("Attach to the app's stdout/stderr and print to console"),
+      terminate_running: z
+        .boolean()
+        .optional()
+        .describe("Terminate the app if it is already running before launching"),
+    },
+    async ({ udid, bundle_id, wait_for_debugger, console, terminate_running }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        const args = [
+          "simctl",
+          "launch",
+          ...(wait_for_debugger ? ["-w"] : []),
+          ...(console ? ["--console-pty"] : []),
+          ...(terminate_running ? ["--terminate-running-process"] : []),
+          actualUdid,
+          bundle_id,
+        ];
+
+        // run() will throw if the command fails (non-zero exit code)
+        const { stdout } = await run("xcrun", args);
+
+        // Extract PID from output if available
+        // simctl launch outputs the PID as the first token in stdout
+        const pidMatch = stdout.match(/^(\d+)/);
+        const pid = pidMatch ? pidMatch[1] : null;
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: pid
+                ? `App ${bundle_id} launched successfully with PID: ${pid}`
+                : `App ${bundle_id} launched successfully`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error launching app: ${toError(error).message}`
               ),
             },
           ],

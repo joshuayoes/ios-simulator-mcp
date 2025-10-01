@@ -242,10 +242,6 @@ This project has been featured and mentioned in various publications and resourc
   udid?: string;
   /** Bundle identifier of the app to launch (e.g., com.apple.mobilesafari) */
   bundle_id: string;
-  /** Wait for debugger to attach before launching */
-  wait_for_debugger?: boolean;
-  /** Attach to the app's stdout/stderr and print to console */
-  console?: boolean;
   /** Terminate the app if it is already running before launching */
   terminate_running?: boolean;
 }
@@ -310,11 +306,13 @@ After a feature implementation, instruct your AI assistant within its MCP client
   ```
 
 - **Stop Recording:**
+
   ```
   Stop the current simulator screen recording
   ```
 
 - **Install App:**
+
   ```
   Install the app at path/to/MyApp.app on the simulator
   ```

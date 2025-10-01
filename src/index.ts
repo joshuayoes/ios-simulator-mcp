@@ -865,12 +865,7 @@ if (!isToolFiltered("install_app")) {
         }
 
         // run() will throw if the command fails (non-zero exit code)
-        await run("xcrun", [
-          "simctl",
-          "install",
-          actualUdid,
-          absolutePath,
-        ]);
+        await run("xcrun", ["simctl", "install", actualUdid, absolutePath]);
 
         return {
           isError: false,
@@ -914,35 +909,25 @@ if (!isToolFiltered("launch_app")) {
         .describe(
           "Bundle identifier of the app to launch (e.g., com.apple.mobilesafari)"
         ),
-      wait_for_debugger: z
-        .boolean()
-        .optional()
-        .describe("Wait for debugger to attach before launching"),
-      console: z
-        .boolean()
-        .optional()
-        .describe("Attach to the app's stdout/stderr and print to console"),
       terminate_running: z
         .boolean()
         .optional()
-        .describe("Terminate the app if it is already running before launching"),
+        .describe(
+          "Terminate the app if it is already running before launching"
+        ),
     },
-    async ({ udid, bundle_id, wait_for_debugger, console, terminate_running }) => {
+    async ({ udid, bundle_id, terminate_running }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        const args = [
+        // run() will throw if the command fails (non-zero exit code)
+        const { stdout } = await run("xcrun", [
           "simctl",
           "launch",
-          ...(wait_for_debugger ? ["-w"] : []),
-          ...(console ? ["--console-pty"] : []),
           ...(terminate_running ? ["--terminate-running-process"] : []),
           actualUdid,
           bundle_id,
-        ];
-
-        // run() will throw if the command fails (non-zero exit code)
-        const { stdout } = await run("xcrun", args);
+        ]);
 
         // Extract PID from output if available
         // simctl launch outputs the PID as the first token in stdout

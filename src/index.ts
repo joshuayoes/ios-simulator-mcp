@@ -38,6 +38,43 @@ async function run(
   };
 }
 
+/**
+ * Gets the IDB command path from environment variable or defaults to "idb"
+ * @returns The path to the IDB executable
+ * @throws Error if custom path is specified but doesn't exist
+ */
+function getIdbPath(): string {
+  const customPath = process.env.IOS_SIMULATOR_MCP_IDB_PATH;
+
+  if (customPath) {
+    // Expand tilde if present
+    const expandedPath = customPath.startsWith("~/")
+      ? path.join(os.homedir(), customPath.slice(2))
+      : customPath;
+
+    // Check if the path exists
+    if (!fs.existsSync(expandedPath)) {
+      throw new Error(
+        `Custom IDB path specified in IOS_SIMULATOR_MCP_IDB_PATH does not exist: ${expandedPath}`
+      );
+    }
+
+    return expandedPath;
+  }
+
+  return "idb";
+}
+
+/**
+ * Runs the idb command with the given arguments
+ * @param args - arguments to pass to the idb command
+ * @returns The stdout and stderr of the command
+ * @see https://fbidb.io/docs/commands for documentation of available idb commands
+ */
+async function idb(...args: string[]) {
+  return run(getIdbPath(), args);
+}
+
 // Read filtered tools from environment variable
 const FILTERED_TOOLS =
   process.env.IOS_SIMULATOR_MCP_FILTERED_TOOLS?.split(",").map((tool) =>
@@ -200,14 +237,14 @@ if (!isToolFiltered("ui_describe_all")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        const { stdout } = await run("idb", [
+        const { stdout } = await idb(
           "ui",
           "describe-all",
           "--udid",
           actualUdid,
           "--json",
-          "--nested",
-        ]);
+          "--nested"
+        );
 
         return {
           isError: false,
@@ -252,7 +289,7 @@ if (!isToolFiltered("ui_tap")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        const { stderr } = await run("idb", [
+        const { stderr } = await idb(
           "ui",
           "tap",
           "--udid",
@@ -264,8 +301,8 @@ if (!isToolFiltered("ui_tap")) {
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
           String(x),
-          String(y),
-        ]);
+          String(y)
+        );
 
         if (stderr) throw new Error(stderr);
 
@@ -310,7 +347,7 @@ if (!isToolFiltered("ui_type")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        const { stderr } = await run("idb", [
+        const { stderr } = await idb(
           "ui",
           "text",
           "--udid",
@@ -319,8 +356,8 @@ if (!isToolFiltered("ui_type")) {
           // to separate the command's options from positional arguments.
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
-          text,
-        ]);
+          text
+        );
 
         if (stderr) throw new Error(stderr);
 
@@ -376,7 +413,7 @@ if (!isToolFiltered("ui_swipe")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        const { stderr } = await run("idb", [
+        const { stderr } = await idb(
           "ui",
           "swipe",
           "--udid",
@@ -391,8 +428,8 @@ if (!isToolFiltered("ui_swipe")) {
           String(x_start),
           String(y_start),
           String(x_end),
-          String(y_end),
-        ]);
+          String(y_end)
+        );
 
         if (stderr) throw new Error(stderr);
 
@@ -434,7 +471,7 @@ if (!isToolFiltered("ui_describe_point")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        const { stdout, stderr } = await run("idb", [
+        const { stdout, stderr } = await idb(
           "ui",
           "describe-point",
           "--udid",
@@ -445,8 +482,8 @@ if (!isToolFiltered("ui_describe_point")) {
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
           String(x),
-          String(y),
-        ]);
+          String(y)
+        );
 
         if (stderr) throw new Error(stderr);
 
@@ -487,14 +524,14 @@ if (!isToolFiltered("ui_view")) {
         const actualUdid = await getBootedDeviceId(udid);
 
         // Get screen dimensions in points from ui_describe_all
-        const { stdout: uiDescribeOutput } = await run("idb", [
+        const { stdout: uiDescribeOutput } = await idb(
           "ui",
           "describe-all",
           "--udid",
           actualUdid,
           "--json",
-          "--nested",
-        ]);
+          "--nested"
+        );
 
         const uiData = JSON.parse(uiDescribeOutput);
         const screenFrame = uiData[0]?.frame;

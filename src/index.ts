@@ -158,6 +158,7 @@ if (!isToolFiltered("get_booted_sim_id")) {
   server.tool(
     "get_booted_sim_id",
     "Get the ID of the currently booted iOS simulator",
+    { title: "Get Booted Simulator ID", readOnlyHint: true, openWorldHint: true },
     async () => {
       try {
         const { id, name } = await getBootedDevice();
@@ -192,6 +193,7 @@ if (!isToolFiltered("open_simulator")) {
   server.tool(
     "open_simulator",
     "Opens the iOS Simulator application",
+    { title: "Open Simulator", readOnlyHint: false, openWorldHint: true },
     async () => {
       try {
         await run("open", ["-a", "Simulator.app"]);
@@ -233,6 +235,7 @@ if (!isToolFiltered("ui_describe_all")) {
         .optional()
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
     },
+    { title: "Describe All UI Elements", readOnlyHint: true, openWorldHint: true },
     async ({ udid }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -285,6 +288,7 @@ if (!isToolFiltered("ui_tap")) {
       x: z.number().describe("The x-coordinate"),
       y: z.number().describe("The x-coordinate"),
     },
+    { title: "UI Tap", readOnlyHint: false, openWorldHint: true },
     async ({ duration, udid, x, y }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -343,6 +347,7 @@ if (!isToolFiltered("ui_type")) {
         .regex(/^[\x20-\x7E]+$/)
         .describe("Text to input"),
     },
+    { title: "UI Type", readOnlyHint: false, openWorldHint: true },
     async ({ udid, text }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -409,6 +414,7 @@ if (!isToolFiltered("ui_swipe")) {
         .describe("The size of each step in the swipe (default is 1)")
         .default(1),
     },
+    { title: "UI Swipe", readOnlyHint: false, openWorldHint: true },
     async ({ duration, udid, x_start, y_start, x_end, y_end, delta }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -467,6 +473,7 @@ if (!isToolFiltered("ui_describe_point")) {
       x: z.number().describe("The x-coordinate"),
       y: z.number().describe("The y-coordinate"),
     },
+    { title: "Describe UI Point", readOnlyHint: true, openWorldHint: true },
     async ({ udid, x, y }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -519,6 +526,7 @@ if (!isToolFiltered("ui_view")) {
         .optional()
         .describe("Udid of target, can also be set with the IDB_UDID env var"),
     },
+    { title: "View Screenshot", readOnlyHint: true, openWorldHint: true },
     async ({ udid }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -674,6 +682,7 @@ if (!isToolFiltered("screenshot")) {
           "For non-rectangular displays, handle the mask by policy (ignored, alpha, or black)"
         ),
     },
+    { title: "Take Screenshot", readOnlyHint: false, openWorldHint: true },
     async ({ udid, output_path, type, display, mask }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -763,6 +772,7 @@ if (!isToolFiltered("record_video")) {
           "Force the output file to be written to, even if the file already exists."
         ),
     },
+    { title: "Record Video", readOnlyHint: false, openWorldHint: true },
     async ({ output_path, codec, display, mask, force }) => {
       try {
         const defaultFileName = `simulator_recording_${Date.now()}.mp4`;
@@ -839,6 +849,7 @@ if (!isToolFiltered("stop_recording")) {
     "stop_recording",
     "Stops the simulator video recording using killall",
     {},
+    { title: "Stop Recording", readOnlyHint: false, openWorldHint: true },
     async () => {
       try {
         await run("pkill", ["-SIGINT", "-f", "simctl.*recordVideo"]);
@@ -889,6 +900,7 @@ if (!isToolFiltered("install_app")) {
           "Path to the app bundle (.app directory or .ipa file) to install"
         ),
     },
+    { title: "Install App", readOnlyHint: false, openWorldHint: true },
     async ({ udid, app_path }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -953,6 +965,7 @@ if (!isToolFiltered("launch_app")) {
           "Terminate the app if it is already running before launching"
         ),
     },
+    { title: "Launch App", readOnlyHint: false, openWorldHint: true },
     async ({ udid, bundle_id, terminate_running }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);

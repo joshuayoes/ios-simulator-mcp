@@ -409,7 +409,7 @@ Claude Code CLI can manage MCP servers using the `claude mcp` commands or by edi
 1.  Clone this repository, install dependencies, and build the project as described in the Cursor "Local Development" steps 1-3.
 2.  Add the server using the `claude mcp add` command, pointing to your local build:
     ```bash
-    claude mcp add ios-simulator --command node --args "/full/path/to/your/ios-simulator-mcp/build/index.js"
+    claude mcp add ios-simulator -- node "/full/path/to/your/ios-simulator-mcp/build/index.js"
     ```
     **Important:** Replace `/full/path/to/your/` with the absolute path to where you cloned the `ios-simulator-mcp` repository.
 3.  Restart any running Claude Code sessions if necessary.

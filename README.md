@@ -244,6 +244,23 @@ This project has been featured and mentioned in various publications and resourc
   bundle_id: string;
   /** Terminate the app if it is already running before launching */
   terminate_running?: boolean;
+  /** Optional environment variables passed via SIMCTL_CHILD_ to simctl launch */
+  env?: Record<string, string>;
+}
+```
+
+**Notes:** Environment variables are passed using `SIMCTL_CHILD_` because `simctl launch` does not support `--env/--envs` on all Xcode versions.
+
+**Example:**
+
+```json
+{
+  "bundle_id": "com.example.app",
+  "terminate_running": true,
+  "env": {
+    "FOO": "bar",
+    "BAZ": "qux"
+  }
 }
 ```
 

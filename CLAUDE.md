@@ -70,3 +70,14 @@ Test changes by:
 - **Real use cases only**: Don't add hypothetical features
 - **Security first**: Always use `--` separator for user inputs, validate with Zod
 - **No architecture changes** without discussion - the single-file design is intentional
+
+## Additional Documentation
+
+For more detailed information, refer to these documentation files:
+
+- **[README.md](README.md)** - Complete project documentation including installation instructions, available tools, configuration options, and usage examples
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines, development setup, dependency management, and the project's philosophy of intentional simplicity
+- **[QA.md](QA.md)** - Manual quality assurance test cases for validating functionality
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and their solutions, including IDB installation help
+- **[SECURITY.md](SECURITY.md)** - Security policy and information about fixed vulnerabilities
+- **[CONTEXT.md](CONTEXT.md)** - Reference links for MCP documentation, iOS simulator commands, IDB commands, and security best practices

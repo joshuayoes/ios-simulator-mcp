@@ -45,6 +45,7 @@ The server provides these tools (can be filtered via environment variables):
 - `ui_type` - Input text
 - `ui_swipe` - Swipe gesture
 - `ui_describe_point` - Get element at specific coordinates
+- `ui_find_element` - Search accessibility tree for elements by label, identifier, or type
 - `ui_view` - Get compressed screenshot as base64 JPEG
 - `screenshot` - Save screenshot to file
 - `record_video` - Start video recording

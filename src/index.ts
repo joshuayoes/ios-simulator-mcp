@@ -350,108 +350,22 @@ if (!isToolFiltered("ui_type")) {
     { title: "UI Type", readOnlyHint: false, openWorldHint: true },
     async ({ udid, text }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
-
-        // Use clipboard-based approach to handle non-US keyboard layouts (AZERTY, QWERTZ, etc.)
-        // This avoids the issue where idb sends keystrokes assuming QWERTY layout
+        // Use AppleScript keystroke to type text into the Simulator.
+        // Unlike idb's HID-based approach, AppleScript sends Unicode characters
+        // directly, making it keyboard-layout-independent (AZERTY, QWERTZ, etc.)
         // See: https://github.com/joshuayoes/ios-simulator-mcp/issues/43
-
-        // Step 1: Copy text to the simulator's clipboard using simctl pbcopy
-        // We use spawn with stdin to pipe the text directly
-        await new Promise<void>((resolve, reject) => {
-          const pbcopyProcess = spawn("xcrun", [
-            "simctl",
-            "pbcopy",
-            actualUdid,
-          ]);
-
-          pbcopyProcess.stdin.write(text);
-          pbcopyProcess.stdin.end();
-
-          pbcopyProcess.on("close", (code) => {
-            if (code === 0) {
-              resolve();
-            } else {
-              reject(new Error(`pbcopy exited with code ${code}`));
-            }
-          });
-
-          pbcopyProcess.on("error", reject);
-        });
-
-        // Step 2: Use AppleScript to send Cmd+V (paste) to the Simulator app
-        // This works regardless of the keyboard layout configured in the simulator
         await run("osascript", [
           "-e",
           'tell application "Simulator" to activate',
         ]);
-
-        // Small delay to ensure Simulator is focused
         await new Promise((resolve) => setTimeout(resolve, 100));
 
+        // Escape backslashes and double quotes for AppleScript string literal
+        const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
         await run("osascript", [
           "-e",
-          'tell application "System Events" to keystroke "v" using command down',
+          `tell application "System Events" to keystroke "${escaped}"`,
         ]);
-
-        // Step 3: Wait for paste menu to appear and tap on "Paste" button
-        // iOS 16+ shows a confirmation menu for clipboard access
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        // Use idb to find and tap the Paste button in the paste menu
-        try {
-          const { stdout: describeOutput } = await idb(
-            "ui",
-            "describe-all",
-            "--udid",
-            actualUdid
-          );
-
-          // Parse JSON output and find Paste element
-          // The paste menu shows "Paste" or localized variants
-          const elements = JSON.parse(describeOutput) as Array<{
-            AXLabel?: string;
-            frame?: { x: number; y: number; width: number; height: number };
-          }>;
-
-          // Supported paste button labels across different locales
-          const pasteLabels = [
-            "Paste",      // English
-            "Coller",     // French
-            "Einsetzen",  // German
-            "Pegar",      // Spanish
-            "Incolla",    // Italian
-            "Inserisci",  // Italian (alt)
-            "Plakken",    // Dutch
-            "Colar",      // Portuguese
-          ];
-
-          for (const element of elements) {
-            if (element.AXLabel && pasteLabels.includes(element.AXLabel)) {
-              const frame = element.frame;
-              if (frame && typeof frame.x === "number" && typeof frame.y === "number") {
-                const x = frame.x + frame.width / 2;
-                const y = frame.y + frame.height / 2;
-                await idb(
-                  "ui",
-                  "tap",
-                  "--udid",
-                  actualUdid,
-                  "--json",
-                  "--",
-                  String(x),
-                  String(y)
-                );
-                break;
-              }
-            }
-          }
-        } catch {
-          // Silently ignore errors - paste menu may not appear on:
-          // - Older iOS versions that paste directly
-          // - Apps with custom paste handling
-          // - When clipboard access was already granted
-        }
 
         return {
           isError: false,

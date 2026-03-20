@@ -142,6 +142,30 @@ This project has been featured and mentioned in various publications and resourc
 }
 ```
 
+### `ui_find_element`
+
+**Description:** Searches the accessibility tree and returns elements matching the given criteria
+
+**Parameters:**
+
+```typescript
+{
+  /** Array of search strings. An element matches if ANY string matches against its AXLabel or AXUniqueId */
+  search: string[];
+  /** Filter by element type (e.g. 'Button', 'StaticText', 'Group'). Case-insensitive exact match */
+  type?: string;
+  /** Match mode: 'substring' (default) or 'exact' */
+  matchMode?: "substring" | "exact";
+  /** Whether search matching is case-sensitive (default: false) */
+  caseSensitive?: boolean;
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
+}
+```
+
 ### `ui_view`
 
 **Description:** Get the image content of a compressed screenshot of the current simulator view

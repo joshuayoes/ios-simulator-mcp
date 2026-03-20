@@ -113,29 +113,59 @@ function errorWithTroubleshooting(message: string): string {
   return `${message}\n\nFor help, see the ${troubleshootingLink()}`;
 }
 
-async function getBootedDevice() {
-  const { stdout, stderr } = await run("xcrun", ["simctl", "list", "devices"]);
+type BootedDevice = {
+  id: string;
+  name: string;
+};
+
+type SimctlDevice = {
+  name?: string;
+  state?: string;
+  udid?: string;
+};
+
+type SimctlListDevicesResponse = {
+  devices?: Record<string, SimctlDevice[]>;
+};
+
+function isBootedDevice(
+  device: SimctlDevice
+): device is SimctlDevice & { name: string; state: "Booted"; udid: string } {
+  return (
+    device.state === "Booted" &&
+    typeof device.name === "string" &&
+    typeof device.udid === "string"
+  );
+}
+
+async function getBootedDevices(): Promise<BootedDevice[]> {
+  const { stdout, stderr } = await run("xcrun", [
+    "simctl",
+    "list",
+    "devices",
+    "--json",
+  ]);
 
   if (stderr) throw new Error(stderr);
 
-  // Parse the output to find booted device
-  const lines = stdout.split("\n");
-  for (const line of lines) {
-    if (line.includes("Booted")) {
-      // Extract the UUID - it's inside parentheses
-      const match = line.match(/\(([-0-9A-F]+)\)/);
-      if (match) {
-        const deviceId = match[1];
-        const deviceName = line.split("(")[0].trim();
-        return {
-          name: deviceName,
-          id: deviceId,
-        };
-      }
-    }
+  const devices = (JSON.parse(stdout) as SimctlListDevicesResponse).devices ?? {};
+  const bootedDevices = Object.values(devices)
+    .flat()
+    .filter(isBootedDevice)
+    .map((device) => ({
+      name: device.name,
+      id: device.udid,
+    }));
+
+  if (bootedDevices.length === 0) {
+    throw Error("No booted simulator found");
   }
 
-  throw Error("No booted simulator found");
+  return bootedDevices;
+}
+
+async function getBootedDevice(): Promise<BootedDevice> {
+  return (await getBootedDevices())[0];
 }
 
 async function getBootedDeviceId(
@@ -154,21 +184,25 @@ async function getBootedDeviceId(
 }
 
 // Register tools only if they're not filtered
-if (!isToolFiltered("get_booted_sim_id")) {
+if (!isToolFiltered("get_booted_sim_ids")) {
   server.tool(
-    "get_booted_sim_id",
-    "Get the ID of the currently booted iOS simulator",
-    { title: "Get Booted Simulator ID", readOnlyHint: true, openWorldHint: true },
+    "get_booted_sim_ids",
+    "Get the IDs and names of all currently booted iOS simulators",
+    {
+      title: "Get Booted Simulator IDs",
+      readOnlyHint: true,
+      openWorldHint: true,
+    },
     async () => {
       try {
-        const { id, name } = await getBootedDevice();
+        const bootedDevices = await getBootedDevices();
 
         return {
           isError: false,
           content: [
             {
               type: "text",
-              text: `Booted Simulator: "${name}". UUID: "${id}"`,
+              text: JSON.stringify(bootedDevices, null, 2),
             },
           ],
         };

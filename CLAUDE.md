@@ -38,7 +38,7 @@ The entire server implementation is in `src/index.ts` (single file by design). T
 ## Available MCP Tools
 
 The server provides these tools (can be filtered via environment variables):
-- `get_booted_sim_id` - Get the currently booted simulator ID
+- `get_booted_sim_ids` - Get the ids and names of all currently booted simulators
 - `open_simulator` - Open the iOS Simulator application
 - `ui_describe_all` - Get accessibility info for the entire screen
 - `ui_tap` - Tap at coordinates

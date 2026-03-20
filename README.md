@@ -19,11 +19,13 @@ This project has been featured and mentioned in various publications and resourc
 
 ## Tools
 
-### `get_booted_sim_id`
+### `get_booted_sim_ids`
 
-**Description:** Get the ID of the currently booted iOS simulator
+**Description:** Get the IDs and names of all currently booted iOS simulators
 
 **Parameters:** No Parameters
+
+**Returns:** A JSON array of booted simulators, each with `id` and `name`
 
 ### `open_simulator`
 

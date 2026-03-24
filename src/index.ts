@@ -20,6 +20,33 @@ const UDID_REGEX =
 const TMP_ROOT_DIR = fs.mkdtempSync(
   path.join(os.tmpdir(), "ios-simulator-mcp-")
 );
+const DEFAULT_SWIPE_DURATION_SECONDS = "1";
+const DEFAULT_SWIPE_DURATION_MS = 1000;
+const WDA_BUNDLE_ID = "com.facebook.WebDriverAgentRunner.xctrunner";
+const WDA_REPO_URL = "https://github.com/appium/WebDriverAgent.git";
+const WDA_CACHE_DIR = path.join(os.homedir(), ".ios-simulator-mcp", "wda");
+const WDA_REPO_DIR = path.join(WDA_CACHE_DIR, "repo");
+const WDA_DERIVED_DATA_DIR = path.join(WDA_CACHE_DIR, "DerivedData");
+const WDA_APP_PATH = path.join(
+  WDA_DERIVED_DATA_DIR,
+  "Build",
+  "Products",
+  "Debug-iphonesimulator",
+  "WebDriverAgentRunner-Runner.app"
+);
+const WDA_BUILD_TIMEOUT_MS = 120_000;
+const WDA_BUILD_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+const WDA_START_TIMEOUT_MS = 10_000;
+const WDA_STATUS_POLL_INTERVAL_MS = 100;
+const WDA_PORT_SEARCH_LIMIT = 100;
+const parsedWdaPort = Number.parseInt(
+  process.env.IOS_SIMULATOR_MCP_WDA_PORT ?? "",
+  10
+);
+const WDA_PORT_START = Number.isFinite(parsedWdaPort) ? parsedWdaPort : 8100;
+const wdaPortsByDeviceId = new Map<string, number>();
+let wdaPortLock = Promise.resolve();
+const ERROR_SUMMARY_MAX_CHARS = 300;
 
 /**
  * Runs a command with arguments and returns the stdout and stderr
@@ -29,9 +56,13 @@ const TMP_ROOT_DIR = fs.mkdtempSync(
  */
 async function run(
   cmd: string,
-  args: string[]
+  args: string[],
+  options?: { env?: NodeJS.ProcessEnv }
 ): Promise<{ stdout: string; stderr: string }> {
-  const { stdout, stderr } = await execFileAsync(cmd, args, { shell: false });
+  const { stdout, stderr } = await execFileAsync(cmd, args, {
+    shell: false,
+    ...(options?.env ? { env: options.env } : {}),
+  });
   return {
     stdout: stdout.trim(),
     stderr: stderr.trim(),
@@ -105,6 +136,56 @@ function toError(input: unknown): Error {
   return new Error(JSON.stringify(input));
 }
 
+function summarizeErrorMessage(message: string): string {
+  const compactMessage = message
+    .split("\n")[0]
+    .split(" | stdout:")[0]
+    .split(" | stderr:")[0]
+    .trim();
+
+  if (compactMessage.length <= ERROR_SUMMARY_MAX_CHARS) {
+    return compactMessage;
+  }
+
+  return `${compactMessage.slice(0, ERROR_SUMMARY_MAX_CHARS - 3)}...`;
+}
+
+async function writeTempLog(prefix: string, contents: string): Promise<string> {
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const logPath = path.join(TMP_ROOT_DIR, `${prefix}-${uniqueSuffix}.log`);
+  await fs.promises.writeFile(logPath, contents, "utf8");
+  return logPath;
+}
+
+function describeCommandError(error: unknown): string {
+  const baseMessage = toError(error).message;
+  const details = new Set<string>();
+
+  if (baseMessage) {
+    details.add(baseMessage);
+  }
+
+  if (typeof error === "object" && error !== null) {
+    if ("code" in error && typeof error.code === "number") {
+      details.add(`exit code ${error.code}`);
+    }
+
+    if ("signal" in error && typeof error.signal === "string" && error.signal) {
+      details.add(`signal ${error.signal}`);
+    }
+
+    if ("stdout" in error && typeof error.stdout === "string" && error.stdout.trim()) {
+      details.add(`stdout: ${error.stdout.trim()}`);
+    }
+
+    if ("stderr" in error && typeof error.stderr === "string" && error.stderr.trim()) {
+      details.add(`stderr: ${error.stderr.trim()}`);
+    }
+  }
+
+  return Array.from(details).join(" | ");
+}
+
 function troubleshootingLink(): string {
   return "[Troubleshooting Guide](https://github.com/joshuayoes/ios-simulator-mcp/blob/main/TROUBLESHOOTING.md) | [Plain Text Guide for LLMs](https://raw.githubusercontent.com/joshuayoes/ios-simulator-mcp/refs/heads/main/TROUBLESHOOTING.md)";
 }
@@ -127,6 +208,30 @@ type SimctlDevice = {
 type SimctlListDevicesResponse = {
   devices?: Record<string, SimctlDevice[]>;
 };
+
+type WdaStatusResponse = {
+  value?: {
+    ready?: boolean;
+  };
+};
+
+type WdaLaunchResult =
+  | {
+      ok: true;
+    }
+  | {
+      ok: false;
+      reason: string;
+    };
+
+type WdaPortForSwipeResult =
+  | {
+      port: number;
+    }
+  | {
+      port: null;
+      reason: string;
+    };
 
 function isBootedDevice(
   device: SimctlDevice
@@ -181,6 +286,621 @@ async function getBootedDeviceId(
     throw new Error("No booted simulator found and no deviceId provided");
   }
   return actualDeviceId;
+}
+
+function getWdaBaseUrl(port: number): string {
+  return `http://127.0.0.1:${port}`;
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getSwipeDurationSeconds(duration: string | undefined): string {
+  return duration ?? DEFAULT_SWIPE_DURATION_SECONDS;
+}
+
+function getSwipeDurationMs(duration: string | undefined): number {
+  if (!duration) {
+    return DEFAULT_SWIPE_DURATION_MS;
+  }
+
+  return Math.max(1, Math.round(Number(duration) * 1000));
+}
+
+async function withWdaPortLock<T>(fn: () => Promise<T>): Promise<T> {
+  let releaseLock = () => {};
+  const nextLock = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  const previousLock = wdaPortLock;
+  wdaPortLock = previousLock.then(() => nextLock);
+
+  await previousLock;
+
+  try {
+    return await fn();
+  } finally {
+    releaseLock();
+  }
+}
+
+async function getListeningPidsForPort(port: number): Promise<string[]> {
+  try {
+    const { stdout } = await run("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]);
+    return Array.from(new Set(stdout.split(/\s+/).filter(Boolean)));
+  } catch {
+    return [];
+  }
+}
+
+async function isPortAvailable(port: number): Promise<boolean> {
+  return (await getListeningPidsForPort(port)).length === 0;
+}
+
+function pruneWdaPorts(bootedDevices: BootedDevice[]): void {
+  const bootedDeviceIds = new Set(bootedDevices.map((device) => device.id));
+
+  for (const deviceId of wdaPortsByDeviceId.keys()) {
+    if (!bootedDeviceIds.has(deviceId)) {
+      wdaPortsByDeviceId.delete(deviceId);
+    }
+  }
+}
+
+async function isWdaRunning(port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`${getWdaBaseUrl(port)}/status`);
+    if (!response.ok) return false;
+
+    const payload = (await response.json()) as WdaStatusResponse;
+    return payload.value?.ready === true;
+  } catch {
+    return false;
+  }
+}
+
+async function getWdaDeviceIdForPort(port: number): Promise<string | null> {
+  const pids = await getListeningPidsForPort(port);
+
+  for (const pid of pids) {
+    try {
+      const { stdout: command } = await run("ps", ["-p", pid, "-o", "command="]);
+      const match = command.match(/CoreSimulator\/Devices\/([0-9A-Fa-f-]{36})\//);
+
+      if (match) {
+        return match[1].toUpperCase();
+      }
+    } catch {
+      // Ignore transient process lookup failures and keep checking any remaining PIDs.
+    }
+  }
+
+  return null;
+}
+
+function removeWdaPortMappings(port: number): void {
+  for (const [deviceId, mappedPort] of wdaPortsByDeviceId.entries()) {
+    if (mappedPort === port) {
+      wdaPortsByDeviceId.delete(deviceId);
+    }
+  }
+}
+
+async function getVerifiedWdaDeviceIdForPort(
+  port: number,
+  expectedDeviceId: string
+): Promise<string> {
+  const runningDeviceId = await getWdaDeviceIdForPort(port);
+
+  if (!runningDeviceId) {
+    throw new Error(
+      `WebDriverAgent is responding on port ${port}, but the owning simulator could not be determined`
+    );
+  }
+
+  const normalizedExpectedDeviceId = expectedDeviceId.toUpperCase();
+  if (runningDeviceId !== normalizedExpectedDeviceId) {
+    throw new Error(
+      `WebDriverAgent port ${port} belongs to simulator ${runningDeviceId}, not requested simulator ${normalizedExpectedDeviceId}`
+    );
+  }
+
+  return runningDeviceId;
+}
+
+function getWdaSessionId(payload: unknown): string | null {
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+
+  if (
+    "value" in payload &&
+    typeof payload.value === "object" &&
+    payload.value !== null &&
+    "sessionId" in payload.value &&
+    typeof payload.value.sessionId === "string"
+  ) {
+    return payload.value.sessionId;
+  }
+
+  if ("sessionId" in payload && typeof payload.sessionId === "string") {
+    return payload.sessionId;
+  }
+
+  return null;
+}
+
+async function createWdaSession(port: number): Promise<string> {
+  const response = await fetch(`${getWdaBaseUrl(port)}/session`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      capabilities: {
+        alwaysMatch: {
+          platformName: "iOS",
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to create WebDriverAgent session: ${response.status} ${await response.text()}`
+    );
+  }
+
+  const payload = await response.json();
+  const sessionId = getWdaSessionId(payload);
+  if (!sessionId) {
+    throw new Error(
+      `Invalid WebDriverAgent session response: ${JSON.stringify(payload)}`
+    );
+  }
+
+  return sessionId;
+}
+
+async function deleteWdaSession(
+  port: number,
+  sessionId: string
+): Promise<void> {
+  try {
+    await fetch(`${getWdaBaseUrl(port)}/session/${sessionId}`, { method: "DELETE" });
+  } catch {
+    // Ignore cleanup errors because the swipe itself has already completed or failed.
+  }
+}
+
+async function withWdaSession<T>(
+  port: number,
+  fn: (sessionUrl: string) => Promise<T>
+): Promise<T> {
+  const sessionId = await createWdaSession(port);
+
+  try {
+    return await fn(`${getWdaBaseUrl(port)}/session/${sessionId}`);
+  } finally {
+    await deleteWdaSession(port, sessionId);
+  }
+}
+
+async function clearWdaActions(sessionUrl: string): Promise<void> {
+  try {
+    await fetch(`${sessionUrl}/actions`, { method: "DELETE" });
+  } catch {
+    // Ignore cleanup errors so they do not mask the main swipe result.
+  }
+}
+
+async function performWdaSwipe(
+  port: number,
+  deviceId: string,
+  xStart: number,
+  yStart: number,
+  xEnd: number,
+  yEnd: number,
+  durationMs: number
+): Promise<void> {
+  await getVerifiedWdaDeviceIdForPort(port, deviceId);
+
+  await withWdaSession(port, async (sessionUrl) => {
+    try {
+      const response = await fetch(`${sessionUrl}/actions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          actions: [
+            {
+              type: "pointer",
+              id: "finger1",
+              parameters: { pointerType: "touch" },
+              actions: [
+                { type: "pointerMove", duration: 0, x: xStart, y: yStart },
+                { type: "pointerDown", button: 0 },
+                { type: "pointerMove", duration: durationMs, x: xEnd, y: yEnd },
+                { type: "pointerUp", button: 0 },
+              ],
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `WebDriverAgent actions request failed: ${response.status} ${await response.text()}`
+        );
+      }
+    } finally {
+      await clearWdaActions(sessionUrl);
+    }
+  });
+}
+
+async function performIdbSwipe(
+  deviceId: string,
+  xStart: number,
+  yStart: number,
+  xEnd: number,
+  yEnd: number,
+  durationSeconds: string,
+  delta: number | undefined
+): Promise<void> {
+  const { stderr } = await idb(
+    "ui",
+    "swipe",
+    "--udid",
+    deviceId,
+    "--duration",
+    durationSeconds,
+    ...(delta !== undefined ? ["--delta", String(delta)] : []),
+    "--json",
+    // When passing user-provided values to a command, it's crucial to use `--`
+    // to separate the command's options from positional arguments.
+    // This prevents the shell from misinterpreting the arguments as options.
+    "--",
+    String(xStart),
+    String(yStart),
+    String(xEnd),
+    String(yEnd)
+  );
+
+  if (stderr) {
+    throw new Error(stderr);
+  }
+}
+
+async function launchAppOnSimulator(
+  deviceId: string,
+  bundleId: string,
+  terminateRunning = false
+): Promise<string> {
+  const { stdout } = await run("xcrun", [
+    "simctl",
+    "launch",
+    ...(terminateRunning ? ["--terminate-running-process"] : []),
+    deviceId,
+    bundleId,
+  ]);
+
+  return stdout;
+}
+
+async function restoreAppAfterWdaLaunch(
+  deviceId: string,
+  restoreAppBundleId: string
+): Promise<string | null> {
+  if (restoreAppBundleId === WDA_BUNDLE_ID) {
+    return null;
+  }
+
+  await launchAppOnSimulator(deviceId, restoreAppBundleId);
+  return restoreAppBundleId;
+}
+
+async function getOrAllocateWdaPort(deviceId: string): Promise<number> {
+  return withWdaPortLock(async () => {
+    const bootedDevices = await getBootedDevices();
+    pruneWdaPorts(bootedDevices);
+    const normalizedDeviceId = deviceId.toUpperCase();
+
+    const existingPort = wdaPortsByDeviceId.get(deviceId);
+    if (existingPort !== undefined) {
+      if (await isPortAvailable(existingPort)) {
+        return existingPort;
+      }
+
+      if (await isWdaRunning(existingPort)) {
+        try {
+          await getVerifiedWdaDeviceIdForPort(existingPort, normalizedDeviceId);
+          return existingPort;
+        } catch {
+          removeWdaPortMappings(existingPort);
+        }
+      }
+
+      wdaPortsByDeviceId.delete(deviceId);
+    }
+
+    const reservedPorts = new Set(wdaPortsByDeviceId.values());
+    for (let offset = 0; offset < WDA_PORT_SEARCH_LIMIT; offset += 1) {
+      const port = WDA_PORT_START + offset;
+      if (reservedPorts.has(port)) {
+        continue;
+      }
+
+      if (await isPortAvailable(port)) {
+        wdaPortsByDeviceId.set(deviceId, port);
+        return port;
+      }
+    }
+
+    throw new Error(
+      `Could not find an available WebDriverAgent port starting at ${WDA_PORT_START}`
+    );
+  });
+}
+
+async function getXcodeVersion(): Promise<string> {
+  const { stdout } = await run("xcodebuild", ["-version"]);
+  return stdout.replace(/\s+/g, "-");
+}
+
+async function isWdaBuildCached(): Promise<boolean> {
+  try {
+    await fs.promises.access(WDA_APP_PATH);
+    const versionFile = path.join(WDA_CACHE_DIR, "xcode-version");
+    const cachedVersion = await fs.promises
+      .readFile(versionFile, "utf-8")
+      .catch(() => "");
+    const currentVersion = await getXcodeVersion();
+    return cachedVersion.trim() === currentVersion;
+  } catch {
+    return false;
+  }
+}
+
+async function cloneWdaRepo(): Promise<void> {
+  if (
+    await fs.promises
+      .access(path.join(WDA_REPO_DIR, ".git"))
+      .then(() => true)
+      .catch(() => false)
+  ) {
+    await run("git", ["-C", WDA_REPO_DIR, "pull", "--ff-only"]);
+    return;
+  }
+
+  await fs.promises.mkdir(WDA_CACHE_DIR, { recursive: true });
+  await run("git", [
+    "clone",
+    "--depth",
+    "1",
+    "--single-branch",
+    WDA_REPO_URL,
+    WDA_REPO_DIR,
+  ]);
+}
+
+async function buildWda(deviceId: string): Promise<void> {
+  let stdout = "";
+  let stderr = "";
+
+  try {
+    const result = await execFileAsync(
+      "xcodebuild",
+      [
+        "build-for-testing",
+        "-quiet",
+        "-project",
+        path.join(WDA_REPO_DIR, "WebDriverAgent.xcodeproj"),
+        "-scheme",
+        "WebDriverAgentRunner",
+        "-sdk",
+        "iphonesimulator",
+        "-destination",
+        `platform=iOS Simulator,id=${deviceId}`,
+        "-derivedDataPath",
+        WDA_DERIVED_DATA_DIR,
+        "CODE_SIGNING_ALLOWED=NO",
+        "CODE_SIGN_IDENTITY=",
+        "CODE_SIGNING_REQUIRED=NO",
+      ],
+      {
+        shell: false,
+        timeout: WDA_BUILD_TIMEOUT_MS,
+        maxBuffer: WDA_BUILD_MAX_BUFFER_BYTES,
+      }
+    );
+
+    stdout = result.stdout;
+    stderr = result.stderr;
+  } catch (error) {
+    throw new Error(`Failed to build WebDriverAgent: ${describeCommandError(error)}`);
+  }
+
+  if (
+    !(await fs.promises
+      .access(WDA_APP_PATH)
+      .then(() => true)
+      .catch(() => false))
+  ) {
+    throw new Error(
+      `xcodebuild succeeded but WDA app not found at ${WDA_APP_PATH}. stderr: ${stderr}`
+    );
+  }
+
+  const currentVersion = await getXcodeVersion();
+  await fs.promises.writeFile(
+    path.join(WDA_CACHE_DIR, "xcode-version"),
+    currentVersion
+  );
+}
+
+async function installWdaOnSimulator(deviceId: string): Promise<void> {
+  try {
+    await run("xcrun", ["simctl", "install", deviceId, WDA_APP_PATH]);
+  } catch (error) {
+    throw new Error(
+      `Failed to install WebDriverAgent on simulator ${deviceId}: ${describeCommandError(
+        error
+      )}`
+    );
+  }
+}
+
+async function ensureWdaInstalled(deviceId: string): Promise<void> {
+  if (!(await isWdaBuildCached())) {
+    try {
+      await cloneWdaRepo();
+    } catch (error) {
+      throw new Error(
+        `Failed to fetch WebDriverAgent sources: ${describeCommandError(error)}`
+      );
+    }
+
+    await buildWda(deviceId);
+  }
+
+  await installWdaOnSimulator(deviceId);
+}
+
+async function launchWda(
+  deviceId: string,
+  port: number
+): Promise<WdaLaunchResult> {
+  try {
+    await run(
+      "xcrun",
+      [
+        "simctl",
+        "launch",
+        "--terminate-running-process",
+        deviceId,
+        WDA_BUNDLE_ID,
+      ],
+      {
+        env: {
+          ...process.env,
+          SIMCTL_CHILD_USE_PORT: String(port),
+        },
+      }
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `simctl launch failed: ${describeCommandError(error)}`,
+    };
+  }
+
+  const deadline = Date.now() + WDA_START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (await isWdaRunning(port)) {
+      return { ok: true };
+    }
+
+    await sleep(WDA_STATUS_POLL_INTERVAL_MS);
+  }
+
+  return {
+    ok: false,
+    reason: `WebDriverAgent did not report ready on port ${port} within ${
+      WDA_START_TIMEOUT_MS / 1000
+    } seconds`,
+  };
+}
+
+async function getWdaPortForSwipe(
+  deviceId: string,
+  restoreAppBundleId: string | undefined
+): Promise<WdaPortForSwipeResult> {
+  const port = await getOrAllocateWdaPort(deviceId);
+
+  if (await isWdaRunning(port)) {
+    try {
+      await getVerifiedWdaDeviceIdForPort(port, deviceId);
+      return { port };
+    } catch (error) {
+      removeWdaPortMappings(port);
+      return {
+        port: null,
+        reason: `WebDriverAgent setup failed before swipe: ${describeCommandError(
+          error
+        )}`,
+      };
+    }
+  }
+
+  if (!restoreAppBundleId) {
+    return {
+      port: null,
+      reason: `WebDriverAgent is not running on simulator ${deviceId}. Re-run ui_swipe with \`restore_app_bundle_id\` set to the exact app bundle identifier that should return to the foreground after WebDriverAgent launches.`,
+    };
+  }
+
+  if (restoreAppBundleId === WDA_BUNDLE_ID) {
+    return {
+      port: null,
+      reason: `The \`restore_app_bundle_id\` cannot be ${WDA_BUNDLE_ID}. Re-run ui_swipe with the app bundle identifier that should return to the foreground after WebDriverAgent launches.`,
+    };
+  }
+
+  // Try launching WDA (it may already be installed)
+  const initialLaunch = await launchWda(deviceId, port);
+  if (initialLaunch.ok) {
+    try {
+      await getVerifiedWdaDeviceIdForPort(port, deviceId);
+      await restoreAppAfterWdaLaunch(deviceId, restoreAppBundleId);
+      return { port };
+    } catch (error) {
+      removeWdaPortMappings(port);
+      return {
+        port: null,
+        reason: `WebDriverAgent launch succeeded, but setup after launch failed: ${describeCommandError(
+          error
+        )}`,
+      };
+    }
+  }
+
+  // WDA not installed — build from source and install
+  try {
+    await ensureWdaInstalled(deviceId);
+  } catch (error) {
+    return {
+      port: null,
+      reason: `WebDriverAgent was not ready on simulator ${deviceId}. Initial launch failed: ${
+        initialLaunch.reason
+      }. Automatic install also failed: ${describeCommandError(error)}`,
+    };
+  }
+
+  // Retry launch after install
+  const relaunch = await launchWda(deviceId, port);
+  if (relaunch.ok) {
+    try {
+      await getVerifiedWdaDeviceIdForPort(port, deviceId);
+      await restoreAppAfterWdaLaunch(deviceId, restoreAppBundleId);
+      return { port };
+    } catch (error) {
+      removeWdaPortMappings(port);
+      return {
+        port: null,
+        reason: `WebDriverAgent started after install, but setup after launch failed: ${describeCommandError(
+          error
+        )}`,
+      };
+    }
+  }
+
+  return {
+    port: null,
+    reason: `WebDriverAgent was installed on simulator ${deviceId}, but it still did not become ready. Initial launch failed: ${initialLaunch.reason}. Launch after install failed: ${relaunch.reason}`,
+  };
 }
 
 // Register tools only if they're not filtered
@@ -432,7 +1152,20 @@ if (!isToolFiltered("ui_swipe")) {
         .string()
         .regex(/^\d+(\.\d+)?$/)
         .optional()
-        .describe("Swipe duration in seconds (e.g., 0.1)"),
+        .describe("Swipe duration in seconds (defaults to 1.0)"),
+      enable_fallback: z
+        .boolean()
+        .optional()
+        .describe(
+          "Allow falling back to the legacy IDB swipe when WebDriverAgent is unavailable or fails (defaults to false)"
+        ),
+      restore_app_bundle_id: z
+        .string()
+        .max(256)
+        .optional()
+        .describe(
+          "Required if WebDriverAgent must be launched; app bundle identifier to relaunch after WebDriverAgent starts so the tested app returns to the foreground"
+        ),
       udid: z
         .string()
         .regex(UDID_REGEX)
@@ -445,46 +1178,152 @@ if (!isToolFiltered("ui_swipe")) {
       delta: z
         .number()
         .optional()
-        .describe("The size of each step in the swipe (default is 1)")
-        .default(1),
+        .describe(
+          "Optional legacy IDB step size between touch points; requires enable_fallback=true"
+        ),
     },
     { title: "UI Swipe", readOnlyHint: false, openWorldHint: true },
-    async ({ duration, udid, x_start, y_start, x_end, y_end, delta }) => {
+    async ({
+      duration,
+      enable_fallback,
+      restore_app_bundle_id,
+      udid,
+      x_start,
+      y_start,
+      x_end,
+      y_end,
+      delta,
+    }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
+        const fallbackEnabled = enable_fallback ?? false;
+        const swipeDurationSeconds = getSwipeDurationSeconds(duration);
+        const swipeDurationMs = getSwipeDurationMs(duration);
 
-        const { stderr } = await idb(
-          "ui",
-          "swipe",
-          "--udid",
+        if (delta !== undefined && !fallbackEnabled) {
+          throw new Error(
+            "The `delta` option only works with the legacy IDB swipe. Re-run with `enable_fallback=true` to use it."
+          );
+        }
+
+        if (delta === undefined) {
+          const wdaResult = await getWdaPortForSwipe(
+            actualUdid,
+            restore_app_bundle_id
+          );
+
+          if (wdaResult.port !== null) {
+            try {
+              await performWdaSwipe(
+                wdaResult.port,
+                actualUdid,
+                x_start,
+                y_start,
+                x_end,
+                y_end,
+                swipeDurationMs
+              );
+
+              return {
+                isError: false,
+                content: [
+                  {
+                    type: "text",
+                    text: `Swiped successfully using WebDriverAgent on simulator ${actualUdid} via port ${wdaResult.port}`,
+                  },
+                ],
+              };
+            } catch (error) {
+              const detailedError = describeCommandError(error);
+
+              if (!fallbackEnabled) {
+                throw new Error(
+                  `WebDriverAgent swipe failed: ${detailedError}. Re-run with \`enable_fallback=true\` to use the legacy IDB swipe.`
+                );
+              }
+
+              await performIdbSwipe(
+                actualUdid,
+                x_start,
+                y_start,
+                x_end,
+                y_end,
+                swipeDurationSeconds,
+                delta
+              );
+
+              return {
+                isError: false,
+                content: [
+                  {
+                    type: "text",
+                    text: `Swiped successfully using the legacy IDB fallback after WebDriverAgent failed: ${detailedError}`,
+                  },
+                ],
+              };
+            }
+          }
+
+          if (!fallbackEnabled) {
+            throw new Error(`${wdaResult.reason}. Re-run with \`enable_fallback=true\` to use the legacy IDB swipe.`);
+          }
+
+          await performIdbSwipe(
+            actualUdid,
+            x_start,
+            y_start,
+            x_end,
+            y_end,
+            swipeDurationSeconds,
+            delta
+          );
+
+          return {
+            isError: false,
+            content: [
+              {
+                type: "text",
+                text: `Swiped successfully using the legacy IDB fallback because WebDriverAgent was unavailable: ${wdaResult.reason}`,
+              },
+            ],
+          };
+        }
+
+        await performIdbSwipe(
           actualUdid,
-          ...(duration ? ["--duration", duration] : []),
-          ...(delta ? ["--delta", String(delta)] : []),
-          "--json",
-          // When passing user-provided values to a command, it's crucial to use `--`
-          // to separate the command's options from positional arguments.
-          // This prevents the shell from misinterpreting the arguments as options.
-          "--",
-          String(x_start),
-          String(y_start),
-          String(x_end),
-          String(y_end)
+          x_start,
+          y_start,
+          x_end,
+          y_end,
+          swipeDurationSeconds,
+          delta
         );
-
-        if (stderr) throw new Error(stderr);
 
         return {
           isError: false,
-          content: [{ type: "text", text: "Swiped successfully" }],
+          content: [
+            {
+              type: "text",
+              text: "Swiped successfully using the legacy IDB fallback",
+            },
+          ],
         };
       } catch (error) {
+        const detailedError = describeCommandError(error);
+        const logPath = await writeTempLog(
+          "ui-swipe-error",
+          `Error swiping on the screen: ${detailedError}`
+        );
+
         return {
           isError: true,
           content: [
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error swiping on the screen: ${toError(error).message}`
+                `Error swiping on the screen: ${summarizeErrorMessage(
+                  detailedError
+                )}. Full log written to: ${logPath}`
               ),
             },
           ],
@@ -1129,14 +1968,11 @@ if (!isToolFiltered("launch_app")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        // run() will throw if the command fails (non-zero exit code)
-        const { stdout } = await run("xcrun", [
-          "simctl",
-          "launch",
-          ...(terminate_running ? ["--terminate-running-process"] : []),
+        const stdout = await launchAppOnSimulator(
           actualUdid,
           bundle_id,
-        ]);
+          terminate_running
+        );
 
         // Extract PID from output if available
         // simctl launch outputs the PID as the first token in stdout

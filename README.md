@@ -103,9 +103,20 @@ This project has been featured and mentioned in various publications and resourc
 ```typescript
 {
   /**
-   * Swipe duration in seconds (decimal numbers allowed)
+   * Swipe duration in seconds (decimal numbers allowed, defaults to 1.0)
    */
   duration?: string;
+  /**
+   * Allow falling back to the legacy IDB swipe when WebDriverAgent is
+   * unavailable or fails (defaults to false)
+   */
+  enable_fallback?: boolean;
+  /**
+   * Required if WebDriverAgent must be launched; app bundle identifier to
+   * relaunch after WebDriverAgent starts so the tested app returns to the
+   * foreground
+   */
+  restore_app_bundle_id?: string;
   /**
    * Udid of target, can also be set with the IDB_UDID env var
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
@@ -119,7 +130,7 @@ This project has been featured and mentioned in various publications and resourc
   x_end: number;
   /** The ending y-coordinate */
   y_end: number;
-  /** The size of each step in the swipe (default is 1) */
+  /** Optional legacy IDB step size between touch points; requires enable_fallback=true */
   delta?: number;
 }
 ```

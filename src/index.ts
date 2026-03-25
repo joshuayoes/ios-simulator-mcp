@@ -22,6 +22,12 @@ const TMP_ROOT_DIR = fs.mkdtempSync(
 );
 const DEFAULT_SWIPE_DURATION_SECONDS = "1";
 const DEFAULT_SWIPE_DURATION_MS = 1000;
+const SIMULATOR_PREFERENCES_PLIST = path.join(
+  os.homedir(),
+  "Library",
+  "Preferences",
+  "com.apple.iphonesimulator.plist"
+);
 const WDA_BUNDLE_ID = "com.facebook.WebDriverAgentRunner.xctrunner";
 const WDA_REPO_URL = "https://github.com/appium/WebDriverAgent.git";
 const WDA_CACHE_DIR = path.join(os.homedir(), ".ios-simulator-mcp", "wda");
@@ -209,6 +215,63 @@ type SimctlListDevicesResponse = {
   devices?: Record<string, SimctlDevice[]>;
 };
 
+type RotationAngle = -90 | 0 | 90 | 180;
+
+type BootedDeviceDetails = BootedDevice & {
+  runtimeIdentifier: string;
+};
+
+type UiPoint = {
+  x: number;
+  y: number;
+};
+
+type UiFrame = UiPoint & {
+  width: number;
+  height: number;
+};
+
+type UiElement = {
+  AXFrame?: string | null;
+  children?: UiElement[];
+  frame?: UiFrame;
+  [key: string]: unknown;
+};
+
+type ScreenshotFormat = "png" | "tiff" | "bmp" | "gif" | "jpeg";
+
+type ScreenshotOptions = {
+  display?: "internal" | "external";
+  mask?: "ignored" | "alpha" | "black";
+  type?: ScreenshotFormat;
+};
+
+type PresentationTransform = {
+  presentedHeight: number;
+  presentedWidth: number;
+  rawHeight: number;
+  rawWidth: number;
+  rotationAngle: RotationAngle;
+};
+
+type SimulatorDevicePreferences = {
+  SimulatorWindowOrientation?: string;
+  SimulatorWindowRotationAngle?: number;
+};
+
+type SimulatorHardwareButton = {
+  position: [number, number];
+  size: [number, number];
+};
+
+type SimulatorWindowOrientationSignal = {
+  sleepWake: SimulatorHardwareButton | null;
+  volumeDown: SimulatorHardwareButton | null;
+  volumeUp: SimulatorHardwareButton | null;
+  windowPosition: [number, number];
+  windowSize: [number, number];
+};
+
 type WdaStatusResponse = {
   value?: {
     ready?: boolean;
@@ -233,6 +296,19 @@ type WdaPortForSwipeResult =
       reason: string;
     };
 
+type OrientationProbe = {
+  frame: UiFrame;
+  label: string | null;
+  point: UiPoint;
+};
+
+const ROTATION_ANGLE_CANDIDATES: RotationAngle[] = [0, 90, -90, 180];
+const ORIENTATION_INFERENCE_PROBE_LIMIT = 8;
+const ORIENTATION_INFERENCE_QUICK_PROBE_LIMIT = 3;
+const presentationRotationCacheByDeviceId = new Map<
+  string,
+  { rotationAngle: RotationAngle; signature: string }
+>();
 function isBootedDevice(
   device: SimctlDevice
 ): device is SimctlDevice & { name: string; state: "Booted"; udid: string } {
@@ -273,6 +349,38 @@ async function getBootedDevice(): Promise<BootedDevice> {
   return (await getBootedDevices())[0];
 }
 
+async function getBootedDeviceDetails(
+  deviceId: string | undefined
+): Promise<BootedDeviceDetails> {
+  const actualDeviceId = await getBootedDeviceId(deviceId);
+  const { stdout, stderr } = await run("xcrun", [
+    "simctl",
+    "list",
+    "devices",
+    "--json",
+  ]);
+
+  if (stderr) throw new Error(stderr);
+
+  const devices = (JSON.parse(stdout) as SimctlListDevicesResponse).devices ?? {};
+  for (const [runtimeIdentifier, runtimeDevices] of Object.entries(devices)) {
+    for (const runtimeDevice of runtimeDevices) {
+      if (
+        runtimeDevice.udid === actualDeviceId &&
+        typeof runtimeDevice.name === "string"
+      ) {
+        return {
+          id: actualDeviceId,
+          name: runtimeDevice.name,
+          runtimeIdentifier,
+        };
+      }
+    }
+  }
+
+  throw new Error(`Could not find simulator details for device ${actualDeviceId}`);
+}
+
 async function getBootedDeviceId(
   deviceId: string | undefined
 ): Promise<string> {
@@ -286,6 +394,686 @@ async function getBootedDeviceId(
     throw new Error("No booted simulator found and no deviceId provided");
   }
   return actualDeviceId;
+}
+
+function isUiPoint(value: unknown): value is UiPoint {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "x" in value &&
+    typeof value.x === "number" &&
+    "y" in value &&
+    typeof value.y === "number"
+  );
+}
+
+function isUiFrame(value: unknown): value is UiFrame {
+  return (
+    isUiPoint(value) &&
+    "width" in value &&
+    typeof value.width === "number" &&
+    "height" in value &&
+    typeof value.height === "number"
+  );
+}
+
+function normalizeRotationAngle(
+  rotationAngle: unknown,
+  orientation: unknown
+): RotationAngle {
+  const numericAngle = Number(rotationAngle);
+  if (Number.isFinite(numericAngle)) {
+    const normalizedAngle = ((((0 - numericAngle) % 360) + 540) % 360) - 180;
+    const roundedAngle = Math.round(normalizedAngle / 90) * 90;
+    if (
+      Math.abs(normalizedAngle - roundedAngle) < 0.0001 &&
+      (roundedAngle === 0 ||
+        roundedAngle === 90 ||
+        roundedAngle === -90 ||
+        roundedAngle === 180 ||
+        roundedAngle === -180)
+    ) {
+      return roundedAngle === -180 ? 180 : (roundedAngle as RotationAngle);
+    }
+  }
+
+  switch (orientation) {
+    case "LandscapeLeft":
+      return -90;
+    case "LandscapeRight":
+      return 90;
+    case "PortraitUpsideDown":
+      return 180;
+    default:
+      return 0;
+  }
+}
+
+function formatSimulatorRuntimeTitle(runtimeIdentifier: string): string {
+  const match = runtimeIdentifier.match(/SimRuntime\.([A-Za-z]+)-(.+)$/);
+  if (!match) {
+    return runtimeIdentifier;
+  }
+
+  return `${match[1]} ${match[2].replace(/-/g, ".")}`;
+}
+
+async function getSimulatorDevicePreferences(
+  deviceId: string
+): Promise<SimulatorDevicePreferences> {
+  try {
+    const { stdout } = await run("plutil", [
+      "-extract",
+      `DevicePreferences.${deviceId}`,
+      "json",
+      "-o",
+      "-",
+      SIMULATOR_PREFERENCES_PLIST,
+    ]);
+    return JSON.parse(stdout) as SimulatorDevicePreferences;
+  } catch {
+    return {};
+  }
+}
+
+function getExpectedSimulatorWindowTitle(
+  deviceDetails: BootedDeviceDetails
+): string {
+  return `${deviceDetails.name} \u2013 ${formatSimulatorRuntimeTitle(
+    deviceDetails.runtimeIdentifier
+  )}`;
+}
+
+async function getSimulatorWindowOrientationSignal(
+  deviceId: string
+): Promise<SimulatorWindowOrientationSignal | null> {
+  try {
+    const deviceDetails = await getBootedDeviceDetails(deviceId);
+    const expectedTitle = getExpectedSimulatorWindowTitle(deviceDetails);
+    const expectedNamePrefix = `${deviceDetails.name} \u2013 `;
+    const jxaScript = `
+const expectedTitle = ${JSON.stringify(expectedTitle)};
+const expectedNamePrefix = ${JSON.stringify(expectedNamePrefix)};
+const se = Application("System Events");
+const proc = se.processes.byName("Simulator");
+
+function findWindow() {
+  const windows = proc.windows();
+  for (const win of windows) {
+    const name = win.name();
+    if (name === expectedTitle) {
+      return win;
+    }
+  }
+  for (const win of windows) {
+    const name = win.name();
+    if (name.startsWith(expectedNamePrefix)) {
+      return win;
+    }
+  }
+  if (windows.length === 1) {
+    return windows[0];
+  }
+  return null;
+}
+
+function maybeButton(win, names) {
+  for (const name of names) {
+    try {
+      const button = win.buttons.byName(name);
+      return {
+        position: button.position(),
+        size: button.size(),
+      };
+    } catch {}
+  }
+  return null;
+}
+
+const win = findWindow();
+if (!win) {
+  throw new Error("Simulator window not found");
+}
+
+console.log(JSON.stringify({
+  windowPosition: win.position(),
+  windowSize: win.size(),
+  volumeUp: maybeButton(win, ["Volume Up"]),
+  volumeDown: maybeButton(win, ["Volume Down"]),
+  sleepWake: maybeButton(win, ["Sleep/Wake", "Side Button", "Action"]),
+}));
+`;
+
+    const { stdout } = await run("osascript", [
+      "-l",
+      "JavaScript",
+      "-e",
+      jxaScript,
+    ]);
+    return JSON.parse(stdout) as SimulatorWindowOrientationSignal;
+  } catch {
+    return null;
+  }
+}
+
+function getButtonCenter(button: SimulatorHardwareButton): UiPoint {
+  return {
+    x: button.position[0] + button.size[0] / 2,
+    y: button.position[1] + button.size[1] / 2,
+  };
+}
+
+function getRotationAngleFromWindowSignal(
+  signal: SimulatorWindowOrientationSignal
+): RotationAngle | null {
+  if (!signal.volumeUp || !signal.volumeDown) {
+    return null;
+  }
+
+  const [windowX, windowY] = signal.windowPosition;
+  const [windowWidth, windowHeight] = signal.windowSize;
+  const volumeUpCenter = getButtonCenter(signal.volumeUp);
+  const volumeDownCenter = getButtonCenter(signal.volumeDown);
+  const volumeDx = Math.abs(volumeUpCenter.x - volumeDownCenter.x);
+  const volumeDy = Math.abs(volumeUpCenter.y - volumeDownCenter.y);
+  const averageVolumeX =
+    (volumeUpCenter.x + volumeDownCenter.x) / 2 - windowX;
+  const averageVolumeY =
+    (volumeUpCenter.y + volumeDownCenter.y) / 2 - windowY;
+
+  if (volumeDy >= volumeDx) {
+    return averageVolumeX >= windowWidth / 2 ? 0 : 180;
+  }
+
+  return averageVolumeY >= windowHeight / 2 ? 90 : -90;
+}
+
+async function getPresentedRotationAngle(deviceId: string): Promise<RotationAngle> {
+  const signal = await getSimulatorWindowOrientationSignal(deviceId);
+  const buttonDerivedRotation = signal
+    ? getRotationAngleFromWindowSignal(signal)
+    : null;
+
+  if (buttonDerivedRotation !== null) {
+    return buttonDerivedRotation;
+  }
+
+  const preferences = await getSimulatorDevicePreferences(deviceId);
+  return normalizeRotationAngle(
+    preferences.SimulatorWindowRotationAngle,
+    preferences.SimulatorWindowOrientation
+  );
+}
+
+function getUiRootFrame(uiData: UiElement[]): UiFrame {
+  const rootFrame = uiData[0]?.frame;
+  if (!isUiFrame(rootFrame)) {
+    throw new Error("Could not determine screen dimensions");
+  }
+  return rootFrame;
+}
+
+async function getPresentedUiData(deviceId: string): Promise<UiElement[]> {
+  const { stdout } = await idb(
+    "ui",
+    "describe-all",
+    "--udid",
+    deviceId,
+    "--json",
+    "--nested"
+  );
+
+  const uiData = JSON.parse(stdout);
+  if (!Array.isArray(uiData) || uiData.length === 0) {
+    throw new Error("Could not determine screen dimensions");
+  }
+
+  return uiData as UiElement[];
+}
+
+function createPresentationTransform(
+  presentedRootFrame: UiFrame,
+  rotationAngle: RotationAngle
+): PresentationTransform {
+  const isQuarterTurn = Math.abs(rotationAngle) === 90;
+
+  return {
+    rotationAngle,
+    rawWidth: isQuarterTurn
+      ? presentedRootFrame.height
+      : presentedRootFrame.width,
+    rawHeight: isQuarterTurn
+      ? presentedRootFrame.width
+      : presentedRootFrame.height,
+    presentedWidth: presentedRootFrame.width,
+    presentedHeight: presentedRootFrame.height,
+  };
+}
+
+function pointInFrame(point: UiPoint, frame: UiFrame): boolean {
+  return (
+    point.x >= frame.x &&
+    point.x <= frame.x + frame.width &&
+    point.y >= frame.y &&
+    point.y <= frame.y + frame.height
+  );
+}
+
+function framesApproximatelyEqual(
+  left: UiFrame,
+  right: UiFrame,
+  epsilon = 1
+): boolean {
+  return (
+    Math.abs(left.x - right.x) <= epsilon &&
+    Math.abs(left.y - right.y) <= epsilon &&
+    Math.abs(left.width - right.width) <= epsilon &&
+    Math.abs(left.height - right.height) <= epsilon
+  );
+}
+
+function collectOrientationProbeElements(
+  elements: UiElement[],
+  rootFrame: UiFrame
+): OrientationProbe[] {
+  const probes: Array<OrientationProbe & { score: number }> = [];
+  const rootArea = rootFrame.width * rootFrame.height;
+  const rootCenterX = rootFrame.x + rootFrame.width / 2;
+  const rootCenterY = rootFrame.y + rootFrame.height / 2;
+
+  function visit(element: UiElement, isRoot = false): void {
+    if (isUiFrame(element.frame)) {
+      const area = element.frame.width * element.frame.height;
+      if (
+        !isRoot &&
+        area > 0 &&
+        area < rootArea * 0.9 &&
+        element.frame.width > 4 &&
+        element.frame.height > 4
+      ) {
+        const point = {
+          x: element.frame.x + element.frame.width / 2,
+          y: element.frame.y + element.frame.height / 2,
+        };
+        const normalizedDistanceFromCenter =
+          Math.abs(point.x - rootCenterX) / Math.max(rootFrame.width, 1) +
+          Math.abs(point.y - rootCenterY) / Math.max(rootFrame.height, 1);
+        probes.push({
+          frame: element.frame,
+          label: typeof element.AXLabel === "string" ? element.AXLabel : null,
+          point,
+          score:
+            normalizedDistanceFromCenter +
+            1 / Math.sqrt(Math.max(area, 1)),
+        });
+      }
+    }
+
+    if (Array.isArray(element.children)) {
+      for (const child of element.children) {
+        visit(child);
+      }
+    }
+  }
+
+  elements.forEach((element, index) => visit(element, index === 0));
+
+  return probes
+    .sort(
+      (left, right) => right.score - left.score
+    )
+    .filter((probe, index, allProbes) => {
+      const roundedPoint = roundUiPoint(probe.point);
+      return (
+        allProbes.findIndex((candidate) => {
+          const roundedCandidate = roundUiPoint(candidate.point);
+          return (
+            roundedCandidate.x === roundedPoint.x &&
+            roundedCandidate.y === roundedPoint.y
+          );
+        }) === index
+      );
+    })
+    .slice(0, ORIENTATION_INFERENCE_PROBE_LIMIT)
+    .map(({ score: _score, ...probe }) => probe);
+}
+
+async function describeRawPoint(
+  deviceId: string,
+  rawPoint: UiPoint
+): Promise<UiElement> {
+  const { stdout, stderr } = await idb(
+    "ui",
+    "describe-point",
+    "--udid",
+    deviceId,
+    "--json",
+    "--",
+    String(rawPoint.x),
+    String(rawPoint.y)
+  );
+
+  if (stderr) {
+    throw new Error(stderr);
+  }
+
+  return JSON.parse(stdout) as UiElement;
+}
+
+function getRotationAngleCandidatesForRootFrame(
+  presentedRootFrame: UiFrame
+): RotationAngle[] {
+  if (presentedRootFrame.width > presentedRootFrame.height) {
+    return [90, -90];
+  }
+
+  if (presentedRootFrame.height > presentedRootFrame.width) {
+    return [0, 180];
+  }
+
+  return ROTATION_ANGLE_CANDIDATES;
+}
+
+function scoreProbeMatch(
+  describedElement: UiElement,
+  probe: OrientationProbe
+): 0 | 1 | 2 {
+  if (!isUiFrame(describedElement.frame)) {
+    return 0;
+  }
+
+  if (framesApproximatelyEqual(describedElement.frame, probe.frame)) {
+    return 2;
+  }
+
+  if (pointInFrame(probe.point, describedElement.frame)) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function getPresentationSignature(
+  presentedRootFrame: UiFrame,
+  probes: OrientationProbe[]
+): string {
+  return JSON.stringify({
+    rootFrame: presentedRootFrame,
+    probes: probes.slice(0, 3).map((probe) => ({
+      frame: probe.frame,
+      label: probe.label,
+    })),
+  });
+}
+
+async function inferRotationAngleFromUiQuick(
+  deviceId: string,
+  presentedRootFrame: UiFrame,
+  probes: OrientationProbe[],
+  rotationAngles: RotationAngle[]
+): Promise<RotationAngle | null> {
+  let remainingAngles = [...rotationAngles];
+
+  for (const probe of probes.slice(0, ORIENTATION_INFERENCE_QUICK_PROBE_LIMIT)) {
+    const candidateScores = await Promise.all(
+      remainingAngles.map(async (rotationAngle) => {
+        const transform = createPresentationTransform(
+          presentedRootFrame,
+          rotationAngle
+        );
+        const describedElement = await describeRawPoint(
+          deviceId,
+          roundUiPoint(transformPointToRaw(probe.point, transform))
+        );
+
+        return {
+          rotationAngle,
+          score: scoreProbeMatch(describedElement, probe),
+        };
+      })
+    );
+
+    const bestScore = Math.max(...candidateScores.map((candidate) => candidate.score));
+    if (bestScore <= 0) {
+      continue;
+    }
+
+    const bestAngles = candidateScores
+      .filter((candidate) => candidate.score === bestScore)
+      .map((candidate) => candidate.rotationAngle);
+
+    if (bestAngles.length === 1) {
+      return bestAngles[0];
+    }
+
+    remainingAngles = bestAngles;
+  }
+
+  return remainingAngles.length === 1 ? remainingAngles[0] : null;
+}
+
+async function inferRotationAngleFromUiExhaustive(
+  deviceId: string,
+  presentedRootFrame: UiFrame,
+  probes: OrientationProbe[],
+  rotationAngles: RotationAngle[]
+): Promise<RotationAngle | null> {
+  let bestRotation: RotationAngle | null = null;
+  let bestScore = -1;
+  let hasTie = false;
+
+  for (const rotationAngle of rotationAngles) {
+    const transform = createPresentationTransform(
+      presentedRootFrame,
+      rotationAngle
+    );
+    let score = 0;
+
+    for (const probe of probes) {
+      try {
+        const describedElement = await describeRawPoint(
+          deviceId,
+          roundUiPoint(transformPointToRaw(probe.point, transform))
+        );
+        score += scoreProbeMatch(describedElement, probe);
+      } catch {
+        // Ignore individual probe failures and rely on the remaining probes.
+      }
+    }
+
+    if (score > bestScore) {
+      bestRotation = rotationAngle;
+      bestScore = score;
+      hasTie = false;
+    } else if (score === bestScore) {
+      hasTie = true;
+    }
+  }
+
+  if (bestRotation === null || bestScore <= 0 || hasTie) {
+    return null;
+  }
+
+  return bestRotation;
+}
+
+async function inferRotationAngleFromUi(
+  deviceId: string,
+  presentedRootFrame: UiFrame,
+  probes: OrientationProbe[]
+): Promise<RotationAngle | null> {
+  if (probes.length === 0) {
+    return null;
+  }
+  const candidateAngles = getRotationAngleCandidatesForRootFrame(
+    presentedRootFrame
+  );
+  const cachedRotation =
+    presentationRotationCacheByDeviceId.get(deviceId)?.rotationAngle;
+  const orderedCandidateAngles =
+    cachedRotation !== undefined && candidateAngles.includes(cachedRotation)
+      ? [
+          cachedRotation,
+          ...candidateAngles.filter((rotationAngle) => rotationAngle !== cachedRotation),
+        ]
+      : candidateAngles;
+
+  const quickRotation = await inferRotationAngleFromUiQuick(
+    deviceId,
+    presentedRootFrame,
+    probes,
+    orderedCandidateAngles
+  );
+  if (quickRotation !== null) {
+    return quickRotation;
+  }
+
+  return inferRotationAngleFromUiExhaustive(
+    deviceId,
+    presentedRootFrame,
+    probes,
+    orderedCandidateAngles
+  );
+}
+
+async function getPresentationTransform(
+  deviceId: string,
+  presentedUiData: UiElement[]
+): Promise<PresentationTransform> {
+  const presentedRootFrame = getUiRootFrame(presentedUiData);
+  const probes = collectOrientationProbeElements(presentedUiData, presentedRootFrame);
+  const signature = getPresentationSignature(presentedRootFrame, probes);
+  const cachedEntry = presentationRotationCacheByDeviceId.get(deviceId);
+  if (cachedEntry?.signature === signature) {
+    return createPresentationTransform(
+      presentedRootFrame,
+      cachedEntry.rotationAngle
+    );
+  }
+
+  const inferredRotation = probes.length
+    ? await inferRotationAngleFromUi(deviceId, presentedRootFrame, probes)
+    : null;
+  const rotationAngle =
+    inferredRotation ?? (await getPresentedRotationAngle(deviceId));
+
+  presentationRotationCacheByDeviceId.set(deviceId, {
+    rotationAngle,
+    signature,
+  });
+
+  return createPresentationTransform(presentedRootFrame, rotationAngle);
+}
+
+async function getUiInteractionContext(deviceId: string): Promise<{
+  presentedUiData: UiElement[];
+  transform: PresentationTransform;
+}> {
+  const presentedUiData = await getPresentedUiData(deviceId);
+  const transform = await getPresentationTransform(deviceId, presentedUiData);
+
+  return {
+    transform,
+    presentedUiData,
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function transformPointToRaw(
+  point: UiPoint,
+  transform: PresentationTransform
+): UiPoint {
+  switch (transform.rotationAngle) {
+    case 90:
+      return {
+        x: clamp(point.y, 0, transform.rawWidth),
+        y: clamp(transform.rawHeight - point.x, 0, transform.rawHeight),
+      };
+    case -90:
+      return {
+        x: clamp(transform.rawWidth - point.y, 0, transform.rawWidth),
+        y: clamp(point.x, 0, transform.rawHeight),
+      };
+    case 180:
+      return {
+        x: clamp(transform.rawWidth - point.x, 0, transform.rawWidth),
+        y: clamp(transform.rawHeight - point.y, 0, transform.rawHeight),
+      };
+    default:
+      return {
+        x: clamp(point.x, 0, transform.rawWidth),
+        y: clamp(point.y, 0, transform.rawHeight),
+      };
+  }
+}
+
+function roundUiPoint(point: UiPoint): UiPoint {
+  return {
+    x: Math.round(point.x),
+    y: Math.round(point.y),
+  };
+}
+
+function createTempFilePath(prefix: string, extension: string): string {
+  return path.join(
+    TMP_ROOT_DIR,
+    `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}.${extension}`
+  );
+}
+
+async function captureRawSimulatorScreenshot(
+  deviceId: string,
+  outputPath: string,
+  options: ScreenshotOptions = {}
+): Promise<void> {
+  await run("xcrun", [
+    "simctl",
+    "io",
+    deviceId,
+    "screenshot",
+    ...(options.type ? [`--type=${options.type}`] : []),
+    ...(options.display ? [`--display=${options.display}`] : []),
+    ...(options.mask ? [`--mask=${options.mask}`] : []),
+    "--",
+    outputPath,
+  ]);
+}
+
+async function rotateImageInPlace(
+  filePath: string,
+  rotationAngle: RotationAngle
+): Promise<void> {
+  if (rotationAngle === 0) {
+    return;
+  }
+
+  await run("sips", ["-r", String(rotationAngle), filePath]);
+}
+
+async function savePresentedScreenshot(
+  deviceId: string,
+  outputPath: string,
+  transform: PresentationTransform,
+  options: ScreenshotOptions = {}
+): Promise<void> {
+  const screenshotType = options.type ?? "png";
+  const tempPath = createTempFilePath("screenshot", screenshotType);
+
+  try {
+    await captureRawSimulatorScreenshot(deviceId, tempPath, {
+      ...options,
+      type: screenshotType,
+    });
+    await rotateImageInPlace(tempPath, transform.rotationAngle);
+
+    await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.promises.copyFile(tempPath, outputPath);
+  } finally {
+    await fs.promises.unlink(tempPath).catch(() => {});
+  }
 }
 
 function getWdaBaseUrl(port: number): string {
@@ -993,19 +1781,11 @@ if (!isToolFiltered("ui_describe_all")) {
     async ({ udid }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
-
-        const { stdout } = await idb(
-          "ui",
-          "describe-all",
-          "--udid",
-          actualUdid,
-          "--json",
-          "--nested"
-        );
+        const presentedUiData = await getPresentedUiData(actualUdid);
 
         return {
           isError: false,
-          content: [{ type: "text", text: stdout }],
+          content: [{ type: "text", text: JSON.stringify(presentedUiData) }],
         };
       } catch (error) {
         return {
@@ -1046,6 +1826,10 @@ if (!isToolFiltered("ui_tap")) {
     async ({ duration, udid, x, y }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
+        const { transform } = await getUiInteractionContext(actualUdid);
+        const rawPoint = roundUiPoint(
+          transformPointToRaw({ x, y }, transform)
+        );
 
         const { stderr } = await idb(
           "ui",
@@ -1058,8 +1842,8 @@ if (!isToolFiltered("ui_tap")) {
           // to separate the command's options from positional arguments.
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
-          String(x),
-          String(y)
+          String(rawPoint.x),
+          String(rawPoint.y)
         );
 
         if (stderr) throw new Error(stderr);
@@ -1199,6 +1983,13 @@ if (!isToolFiltered("ui_swipe")) {
         const fallbackEnabled = enable_fallback ?? false;
         const swipeDurationSeconds = getSwipeDurationSeconds(duration);
         const swipeDurationMs = getSwipeDurationMs(duration);
+        const { transform } = await getUiInteractionContext(actualUdid);
+        const rawStartPoint = roundUiPoint(
+          transformPointToRaw({ x: x_start, y: y_start }, transform)
+        );
+        const rawEndPoint = roundUiPoint(
+          transformPointToRaw({ x: x_end, y: y_end }, transform)
+        );
 
         if (delta !== undefined && !fallbackEnabled) {
           throw new Error(
@@ -1217,10 +2008,10 @@ if (!isToolFiltered("ui_swipe")) {
               await performWdaSwipe(
                 wdaResult.port,
                 actualUdid,
-                x_start,
-                y_start,
-                x_end,
-                y_end,
+                rawStartPoint.x,
+                rawStartPoint.y,
+                rawEndPoint.x,
+                rawEndPoint.y,
                 swipeDurationMs
               );
 
@@ -1244,10 +2035,10 @@ if (!isToolFiltered("ui_swipe")) {
 
               await performIdbSwipe(
                 actualUdid,
-                x_start,
-                y_start,
-                x_end,
-                y_end,
+                rawStartPoint.x,
+                rawStartPoint.y,
+                rawEndPoint.x,
+                rawEndPoint.y,
                 swipeDurationSeconds,
                 delta
               );
@@ -1270,10 +2061,10 @@ if (!isToolFiltered("ui_swipe")) {
 
           await performIdbSwipe(
             actualUdid,
-            x_start,
-            y_start,
-            x_end,
-            y_end,
+            rawStartPoint.x,
+            rawStartPoint.y,
+            rawEndPoint.x,
+            rawEndPoint.y,
             swipeDurationSeconds,
             delta
           );
@@ -1291,10 +2082,10 @@ if (!isToolFiltered("ui_swipe")) {
 
         await performIdbSwipe(
           actualUdid,
-          x_start,
-          y_start,
-          x_end,
-          y_end,
+          rawStartPoint.x,
+          rawStartPoint.y,
+          rawEndPoint.x,
+          rawEndPoint.y,
           swipeDurationSeconds,
           delta
         );
@@ -1350,6 +2141,10 @@ if (!isToolFiltered("ui_describe_point")) {
     async ({ udid, x, y }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
+        const { transform } = await getUiInteractionContext(actualUdid);
+        const rawPoint = roundUiPoint(
+          transformPointToRaw({ x, y }, transform)
+        );
 
         const { stdout, stderr } = await idb(
           "ui",
@@ -1361,15 +2156,17 @@ if (!isToolFiltered("ui_describe_point")) {
           // to separate the command's options from positional arguments.
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
-          String(x),
-          String(y)
+          String(rawPoint.x),
+          String(rawPoint.y)
         );
 
         if (stderr) throw new Error(stderr);
 
+        const element = JSON.parse(stdout) as UiElement;
+
         return {
           isError: false,
-          content: [{ type: "text", text: stdout }],
+          content: [{ type: "text", text: JSON.stringify(element) }],
         };
       } catch (error) {
         return {
@@ -1425,17 +2222,7 @@ if (!isToolFiltered("ui_find_element")) {
     async ({ search, type, matchMode, caseSensitive, udid }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
-
-        const { stdout } = await idb(
-          "ui",
-          "describe-all",
-          "--udid",
-          actualUdid,
-          "--json",
-          "--nested"
-        );
-
-        const uiData = JSON.parse(stdout);
+        const presentedUiData = await getPresentedUiData(actualUdid);
 
         function matchesSearch(
           value: string | null,
@@ -1485,7 +2272,7 @@ if (!isToolFiltered("ui_find_element")) {
           return results;
         }
 
-        const results = findElements(uiData);
+        const results = findElements(presentedUiData);
 
         return {
           isError: false,
@@ -1528,44 +2315,17 @@ if (!isToolFiltered("ui_view")) {
     async ({ udid }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
-
-        // Get screen dimensions in points from ui_describe_all
-        const { stdout: uiDescribeOutput } = await idb(
-          "ui",
-          "describe-all",
-          "--udid",
-          actualUdid,
-          "--json",
-          "--nested"
-        );
-
-        const uiData = JSON.parse(uiDescribeOutput);
-        const screenFrame = uiData[0]?.frame;
-        if (!screenFrame) {
-          throw new Error("Could not determine screen dimensions");
-        }
-
-        const pointWidth = screenFrame.width;
-        const pointHeight = screenFrame.height;
+        const { transform } = await getUiInteractionContext(actualUdid);
+        const pointWidth = transform.presentedWidth;
+        const pointHeight = transform.presentedHeight;
 
         // Generate unique file names with timestamp
-        const ts = Date.now();
-        const rawPng = path.join(TMP_ROOT_DIR, `ui-view-${ts}-raw.png`);
-        const compressedJpg = path.join(
-          TMP_ROOT_DIR,
-          `ui-view-${ts}-compressed.jpg`
-        );
+        const rawPng = createTempFilePath("ui-view-raw", "png");
+        const compressedJpg = createTempFilePath("ui-view-compressed", "jpg");
 
         // Capture screenshot as PNG
-        await run("xcrun", [
-          "simctl",
-          "io",
-          actualUdid,
-          "screenshot",
-          "--type=png",
-          "--",
-          rawPng,
-        ]);
+        await captureRawSimulatorScreenshot(actualUdid, rawPng, { type: "png" });
+        await rotateImageInPlace(rawPng, transform.rotationAngle);
 
         // Resize to match point dimensions and compress to JPEG using sips
         await run("sips", [
@@ -1685,34 +2445,19 @@ if (!isToolFiltered("screenshot")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
         const absolutePath = ensureAbsolutePath(output_path);
-
-        // command is weird, it responds with stderr on success and stdout is blank
-        const { stderr: stdout } = await run("xcrun", [
-          "simctl",
-          "io",
-          actualUdid,
-          "screenshot",
-          ...(type ? [`--type=${type}`] : []),
-          ...(display ? [`--display=${display}`] : []),
-          ...(mask ? [`--mask=${mask}`] : []),
-          // When passing user-provided values to a command, it's crucial to use `--`
-          // to separate the command's options from positional arguments.
-          // This prevents the shell from misinterpreting the arguments as options.
-          "--",
-          absolutePath,
-        ]);
-
-        // throw if we don't get the expected success message
-        if (stdout && !stdout.includes("Wrote screenshot to")) {
-          throw new Error(stdout);
-        }
+        const { transform } = await getUiInteractionContext(actualUdid);
+        await savePresentedScreenshot(actualUdid, absolutePath, transform, {
+          type,
+          display,
+          mask,
+        });
 
         return {
           isError: false,
           content: [
             {
               type: "text",
-              text: stdout,
+              text: `Wrote screenshot to ${absolutePath}`,
             },
           ],
         };

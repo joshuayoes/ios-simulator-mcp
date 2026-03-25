@@ -19,6 +19,8 @@ This project has been featured and mentioned in various publications and resourc
 
 ## Tools
 
+> Orientation note: `ui_describe_all`, `ui_find_element`, `ui_describe_point`, `ui_tap`, `ui_swipe`, `ui_view`, and `screenshot` all use the current presented Simulator orientation. In landscape, the returned frames, accepted coordinates, and captured images stay aligned with each other.
+
 ### `get_booted_sim_ids`
 
 **Description:** Get the IDs and names of all currently booted iOS simulators

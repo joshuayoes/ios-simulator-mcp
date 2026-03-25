@@ -349,14 +349,10 @@ async function getBootedDevices(): Promise<BootedDevice[]> {
   return bootedDevices;
 }
 
-async function getBootedDevice(): Promise<BootedDevice> {
-  return (await getBootedDevices())[0];
-}
-
 async function getBootedDeviceDetails(
-  deviceId: string | undefined
+  deviceId: string
 ): Promise<BootedDeviceDetails> {
-  const actualDeviceId = await getBootedDeviceId(deviceId);
+  const actualDeviceId = deviceId;
   const { stdout, stderr } = await run("xcrun", [
     "simctl",
     "list",
@@ -383,21 +379,6 @@ async function getBootedDeviceDetails(
   }
 
   throw new Error(`Could not find simulator details for device ${actualDeviceId}`);
-}
-
-async function getBootedDeviceId(
-  deviceId: string | undefined
-): Promise<string> {
-  // If deviceId not provided, get the currently booted simulator
-  let actualDeviceId = deviceId;
-  if (!actualDeviceId) {
-    const { id } = await getBootedDevice();
-    actualDeviceId = id;
-  }
-  if (!actualDeviceId) {
-    throw new Error("No booted simulator found and no deviceId provided");
-  }
-  return actualDeviceId;
 }
 
 function isUiPoint(value: unknown): value is UiPoint {
@@ -1778,14 +1759,12 @@ if (!isToolFiltered("ui_describe_all")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
     },
     { title: "Describe All UI Elements", readOnlyHint: true, openWorldHint: true },
     async ({ udid }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
-        const presentedUiData = await getPresentedUiData(actualUdid);
+        const presentedUiData = await getPresentedUiData(udid);
 
         return {
           isError: false,
@@ -1821,16 +1800,14 @@ if (!isToolFiltered("ui_tap")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
       x: z.number().describe("The x-coordinate"),
       y: z.number().describe("The x-coordinate"),
     },
     { title: "UI Tap", readOnlyHint: false, openWorldHint: true },
     async ({ duration, udid, x, y }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
-        const { transform } = await getUiInteractionContext(actualUdid);
+        const { transform } = await getUiInteractionContext(udid);
         const rawPoint = roundUiPoint(
           transformPointToRaw({ x, y }, transform)
         );
@@ -1839,7 +1816,7 @@ if (!isToolFiltered("ui_tap")) {
           "ui",
           "tap",
           "--udid",
-          actualUdid,
+          udid,
           ...(duration ? ["--duration", duration] : []),
           "--json",
           // When passing user-provided values to a command, it's crucial to use `--`
@@ -1881,8 +1858,7 @@ if (!isToolFiltered("ui_type")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
       text: z
         .string()
         .max(500)
@@ -1892,13 +1868,11 @@ if (!isToolFiltered("ui_type")) {
     { title: "UI Type", readOnlyHint: false, openWorldHint: true },
     async ({ udid, text }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
-
         const { stderr } = await idb(
           "ui",
           "text",
           "--udid",
-          actualUdid,
+          udid,
           // When passing user-provided values to a command, it's crucial to use `--`
           // to separate the command's options from positional arguments.
           // This prevents the shell from misinterpreting the arguments as options.
@@ -1957,8 +1931,7 @@ if (!isToolFiltered("ui_swipe")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
       x_start: z.number().describe("The starting x-coordinate"),
       y_start: z.number().describe("The starting y-coordinate"),
       x_end: z.number().describe("The ending x-coordinate"),
@@ -1983,11 +1956,10 @@ if (!isToolFiltered("ui_swipe")) {
       delta,
     }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
         const fallbackEnabled = enable_fallback ?? false;
         const swipeDurationSeconds = getSwipeDurationSeconds(duration);
         const swipeDurationMs = getSwipeDurationMs(duration);
-        const { transform } = await getUiInteractionContext(actualUdid);
+        const { transform } = await getUiInteractionContext(udid);
         const rawStartPoint = roundUiPoint(
           transformPointToRaw({ x: x_start, y: y_start }, transform)
         );
@@ -2003,7 +1975,7 @@ if (!isToolFiltered("ui_swipe")) {
 
         if (delta === undefined) {
           const wdaResult = await getWdaPortForSwipe(
-            actualUdid,
+            udid,
             restore_app_bundle_id
           );
 
@@ -2011,7 +1983,7 @@ if (!isToolFiltered("ui_swipe")) {
             try {
               await performWdaSwipe(
                 wdaResult.port,
-                actualUdid,
+                udid,
                 rawStartPoint.x,
                 rawStartPoint.y,
                 rawEndPoint.x,
@@ -2024,7 +1996,7 @@ if (!isToolFiltered("ui_swipe")) {
                 content: [
                   {
                     type: "text",
-                    text: `Swiped successfully using WebDriverAgent on simulator ${actualUdid} via port ${wdaResult.port}`,
+                    text: `Swiped successfully using WebDriverAgent on simulator ${udid} via port ${wdaResult.port}`,
                   },
                 ],
               };
@@ -2038,7 +2010,7 @@ if (!isToolFiltered("ui_swipe")) {
               }
 
               await performIdbSwipe(
-                actualUdid,
+                udid,
                 rawStartPoint.x,
                 rawStartPoint.y,
                 rawEndPoint.x,
@@ -2064,7 +2036,7 @@ if (!isToolFiltered("ui_swipe")) {
           }
 
           await performIdbSwipe(
-            actualUdid,
+            udid,
             rawStartPoint.x,
             rawStartPoint.y,
             rawEndPoint.x,
@@ -2085,7 +2057,7 @@ if (!isToolFiltered("ui_swipe")) {
         }
 
         await performIdbSwipe(
-          actualUdid,
+          udid,
           rawStartPoint.x,
           rawStartPoint.y,
           rawEndPoint.x,
@@ -2136,16 +2108,14 @@ if (!isToolFiltered("ui_describe_point")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
       x: z.number().describe("The x-coordinate"),
       y: z.number().describe("The y-coordinate"),
     },
     { title: "Describe UI Point", readOnlyHint: true, openWorldHint: true },
     async ({ udid, x, y }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
-        const { transform } = await getUiInteractionContext(actualUdid);
+        const { transform } = await getUiInteractionContext(udid);
         const rawPoint = roundUiPoint(
           transformPointToRaw({ x, y }, transform)
         );
@@ -2154,7 +2124,7 @@ if (!isToolFiltered("ui_describe_point")) {
           "ui",
           "describe-point",
           "--udid",
-          actualUdid,
+          udid,
           "--json",
           // When passing user-provided values to a command, it's crucial to use `--`
           // to separate the command's options from positional arguments.
@@ -2197,8 +2167,7 @@ if (!isToolFiltered("ui_find_element")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
       search: z
         .array(z.string().min(1))
         .min(1)
@@ -2225,8 +2194,7 @@ if (!isToolFiltered("ui_find_element")) {
     { title: "Find UI Element", readOnlyHint: true, openWorldHint: true },
     async ({ search, type, matchMode, caseSensitive, udid }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
-        const presentedUiData = await getPresentedUiData(actualUdid);
+        const presentedUiData = await getPresentedUiData(udid);
 
         function matchesSearch(
           value: string | null,
@@ -2307,19 +2275,17 @@ if (!isToolFiltered("ui_find_element")) {
 if (!isToolFiltered("ui_view")) {
   server.tool(
     "ui_view",
-    "Get the image content of a compressed screenshot of the current simulator view",
+    "Get the image content of a compressed screenshot of the targeted simulator view",
     {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
     },
     { title: "View Screenshot", readOnlyHint: true, openWorldHint: true },
     async ({ udid }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
-        const { transform } = await getUiInteractionContext(actualUdid);
+        const { transform } = await getUiInteractionContext(udid);
         const pointWidth = transform.presentedWidth;
         const pointHeight = transform.presentedHeight;
 
@@ -2328,7 +2294,7 @@ if (!isToolFiltered("ui_view")) {
         const compressedJpg = createTempFilePath("ui-view-compressed", "jpg");
 
         // Capture screenshot as PNG
-        await captureRawSimulatorScreenshot(actualUdid, rawPng, { type: "png" });
+        await captureRawSimulatorScreenshot(udid, rawPng, { type: "png" });
         await rotateImageInPlace(rawPng, transform.rotationAngle);
 
         // Resize to match point dimensions and compress to JPEG using sips
@@ -2572,8 +2538,7 @@ if (!isToolFiltered("screenshot")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
       output_path: z
         .string()
         .max(1024)
@@ -2602,10 +2567,9 @@ if (!isToolFiltered("screenshot")) {
     { title: "Take Screenshot", readOnlyHint: false, openWorldHint: true },
     async ({ udid, output_path, type, display, mask }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
         const absolutePath = ensureAbsolutePath(output_path);
-        const { transform } = await getUiInteractionContext(actualUdid);
-        await savePresentedScreenshot(actualUdid, absolutePath, transform, {
+        const { transform } = await getUiInteractionContext(udid);
+        await savePresentedScreenshot(udid, absolutePath, transform, {
           type,
           display,
           mask,
@@ -2645,8 +2609,7 @@ if (!isToolFiltered("record_video")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
       output_path: z
         .string()
         .max(1024)
@@ -2685,7 +2648,7 @@ if (!isToolFiltered("record_video")) {
       let recordingProcess: ChildProcessWithoutNullStreams | null = null;
 
       try {
-        actualUdid = await getBootedDeviceId(udid);
+        actualUdid = udid;
 
         if (
           getTrackedRecording(actualUdid) ||
@@ -2763,8 +2726,7 @@ if (!isToolFiltered("stop_recording")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
     },
     { title: "Stop Recording", readOnlyHint: false, openWorldHint: true },
     async ({ udid }) => {
@@ -2772,7 +2734,7 @@ if (!isToolFiltered("stop_recording")) {
       let recordingProcess: ChildProcessWithoutNullStreams | null = null;
 
       try {
-        actualUdid = await getBootedDeviceId(udid);
+        actualUdid = udid;
         recordingProcess = getTrackedRecording(actualUdid);
 
         if (!recordingProcess) {
@@ -2828,8 +2790,7 @@ if (!isToolFiltered("install_app")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
       app_path: z
         .string()
         .max(1024)
@@ -2840,7 +2801,6 @@ if (!isToolFiltered("install_app")) {
     { title: "Install App", readOnlyHint: false, openWorldHint: true },
     async ({ udid, app_path }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
         const absolutePath = path.isAbsolute(app_path)
           ? app_path
           : path.resolve(app_path);
@@ -2851,7 +2811,7 @@ if (!isToolFiltered("install_app")) {
         }
 
         // run() will throw if the command fails (non-zero exit code)
-        await run("xcrun", ["simctl", "install", actualUdid, absolutePath]);
+        await run("xcrun", ["simctl", "install", udid, absolutePath]);
 
         return {
           isError: false,
@@ -2887,8 +2847,7 @@ if (!isToolFiltered("launch_app")) {
       udid: z
         .string()
         .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+        .describe("UDID of target simulator"),
       bundle_id: z
         .string()
         .max(256)
@@ -2905,10 +2864,8 @@ if (!isToolFiltered("launch_app")) {
     { title: "Launch App", readOnlyHint: false, openWorldHint: true },
     async ({ udid, bundle_id, terminate_running }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
-
         const stdout = await launchAppOnSimulator(
-          actualUdid,
+          udid,
           bundle_id,
           terminate_running
         );

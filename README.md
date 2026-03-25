@@ -44,10 +44,10 @@ This project has been featured and mentioned in various publications and resourc
 ```typescript
 {
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
 }
 ```
 
@@ -64,10 +64,10 @@ This project has been featured and mentioned in various publications and resourc
    */
   duration?: string;
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
   /** The x-coordinate */
   x: number;
   /** The y-coordinate */
@@ -84,10 +84,10 @@ This project has been featured and mentioned in various publications and resourc
 ```typescript
 {
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
   /**
    * Text to input
    * Format: ASCII printable characters only
@@ -120,10 +120,10 @@ This project has been featured and mentioned in various publications and resourc
    */
   restore_app_bundle_id?: string;
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
   /** The starting x-coordinate */
   x_start: number;
   /** The starting y-coordinate */
@@ -146,10 +146,10 @@ This project has been featured and mentioned in various publications and resourc
 ```typescript
 {
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
   /** The x-coordinate */
   x: number;
   /** The y-coordinate */
@@ -174,26 +174,26 @@ This project has been featured and mentioned in various publications and resourc
   /** Whether search matching is case-sensitive (default: false) */
   caseSensitive?: boolean;
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
 }
 ```
 
 ### `ui_view`
 
-**Description:** Get the image content of a compressed screenshot of the current simulator view
+**Description:** Get the image content of a compressed screenshot of the targeted simulator view
 
 **Parameters:**
 
 ```typescript
 {
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
 }
 ```
 
@@ -206,10 +206,10 @@ This project has been featured and mentioned in various publications and resourc
 ```typescript
 {
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
   /** File path where the screenshot will be saved. If relative, it uses the directory specified by the `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` env var, or `~/Downloads` if not set. */
   output_path: string;
   /** Image format (png, tiff, bmp, gif, or jpeg). Default is png. */
@@ -230,10 +230,10 @@ This project has been featured and mentioned in various publications and resourc
 ```typescript
 {
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
   /** Optional output path. If not provided, a default name will be used. The file will be saved in the directory specified by `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` or in `~/Downloads` if the environment variable is not set. */
   output_path?: string;
   /** Specifies the codec type: "h264" or "hevc". Default is "hevc". */
@@ -256,10 +256,10 @@ This project has been featured and mentioned in various publications and resourc
 ```typescript
 {
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
 }
 ```
 
@@ -272,10 +272,10 @@ This project has been featured and mentioned in various publications and resourc
 ```typescript
 {
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
   /** Path to the app bundle (.app directory or .ipa file) to install */
   app_path: string;
 }
@@ -290,10 +290,10 @@ This project has been featured and mentioned in various publications and resourc
 ```typescript
 {
   /**
-   * Udid of target, can also be set with the IDB_UDID env var
+   * UDID of target simulator
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
-  udid?: string;
+  udid: string;
   /** Bundle identifier of the app to launch (e.g., com.apple.mobilesafari) */
   bundle_id: string;
   /** Terminate the app if it is already running before launching */
@@ -307,73 +307,73 @@ This MCP server allows AI assistants integrated with a Model Context Protocol (M
 
 ### How to Use
 
-After a feature implementation, instruct your AI assistant within its MCP client environment to use the available tools. For example, in Cursor's agent mode, you could use the prompts below to quickly validate and document UI interactions.
+After a feature implementation, instruct your AI assistant within its MCP client environment to use the available tools. First call `get_booted_sim_ids`, choose the simulator you want to test, and pass that `udid` to every simulator-targeted tool call. For example, in Cursor's agent mode, you could use the prompts below to quickly validate and document UI interactions.
 
 ### Example Prompts
 
 - **Verify UI Elements:**
 
   ```
-  Verify all accessibility elements on the current screen
+  Call `get_booted_sim_ids`, choose the simulator I want to test, then call `ui_describe_all` with that `udid` to verify all accessibility elements on its screen
   ```
 
 - **Confirm Text Input:**
 
   ```
-  Enter "QA Test" into the text input field and confirm the input is correct
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `ui_type` with that `udid` to enter "QA Test" into the text input field and confirm the input is correct
   ```
 
 - **Check Tap Response:**
 
   ```
-  Tap on coordinates x=250, y=400 and verify the expected element is triggered
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `ui_tap` with that `udid` to tap on coordinates x=250, y=400 and verify the expected element is triggered
   ```
 
 - **Validate Swipe Action:**
 
   ```
-  Swipe from x=150, y=600 to x=150, y=100 and confirm correct behavior
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `ui_swipe` with that `udid` to swipe from x=150, y=600 to x=150, y=100 and confirm correct behavior
   ```
 
 - **Detailed Element Check:**
 
   ```
-  Describe the UI element at position x=300, y=350 to ensure proper labeling and functionality
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `ui_describe_point` with that `udid` to describe the UI element at position x=300, y=350
   ```
 
 - **Show Your AI Agent the Simulator Screen:**
 
   ```
-  View the current simulator screen
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `ui_view` with that `udid` to view the simulator screen
   ```
 
 - **Take Screenshot:**
 
   ```
-  Take a screenshot of the current simulator screen and save it to my_screenshot.png
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `screenshot` with that `udid` to save a screenshot to my_screenshot.png
   ```
 
 - **Record Video:**
 
   ```
-  Start recording a video of the simulator screen (saves to the default output directory, which is `~/Downloads` unless overridden by `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR`)
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `record_video` with that `udid` to start recording (saves to the default output directory, which is `~/Downloads` unless overridden by `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR`)
   ```
 
 - **Stop Recording:**
 
   ```
-  Stop the current simulator screen recording
+  Call `get_booted_sim_ids`, choose the same simulator `udid` used for recording, then use `stop_recording` with that `udid`
   ```
 
 - **Install App:**
 
   ```
-  Install the app at path/to/MyApp.app on the simulator
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `install_app` with that `udid` to install the app at path/to/MyApp.app
   ```
 
 - **Launch App:**
   ```
-  Launch the Safari app (com.apple.mobilesafari) on the simulator
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `launch_app` with that `udid` to launch Safari (com.apple.mobilesafari)
   ```
 
 ## Prerequisites

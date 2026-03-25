@@ -2,7 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { execFile, spawn } from "child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { promisify } from "util";
 import { z } from "zod";
 import path from "path";
@@ -51,8 +51,12 @@ const parsedWdaPort = Number.parseInt(
 );
 const WDA_PORT_START = Number.isFinite(parsedWdaPort) ? parsedWdaPort : 8100;
 const wdaPortsByDeviceId = new Map<string, number>();
+const activeRecordingsByUdid = new Map<string, ChildProcessWithoutNullStreams>();
+const recordingStartupReservationsByUdid = new Set<string>();
 let wdaPortLock = Promise.resolve();
 const ERROR_SUMMARY_MAX_CHARS = 300;
+const RECORDING_START_TIMEOUT_MS = 3000;
+const RECORDING_STOP_FINALIZATION_TIMEOUT_MS = 3000;
 
 /**
  * Runs a command with arguments and returns the stdout and stderr
@@ -2405,6 +2409,161 @@ function ensureAbsolutePath(filePath: string): string {
   return path.join(defaultDir, filePath);
 }
 
+function isChildProcessFinished(
+  childProcess: ChildProcessWithoutNullStreams
+): boolean {
+  return childProcess.exitCode !== null || childProcess.signalCode !== null;
+}
+
+function clearTrackedRecording(
+  udid: string,
+  recordingProcess?: ChildProcessWithoutNullStreams
+): void {
+  if (!recordingProcess || activeRecordingsByUdid.get(udid) === recordingProcess) {
+    activeRecordingsByUdid.delete(udid);
+  }
+
+  recordingStartupReservationsByUdid.delete(udid);
+}
+
+function getTrackedRecording(
+  udid: string
+): ChildProcessWithoutNullStreams | null {
+  const recordingProcess = activeRecordingsByUdid.get(udid);
+
+  if (!recordingProcess) {
+    return null;
+  }
+
+  if (isChildProcessFinished(recordingProcess)) {
+    clearTrackedRecording(udid, recordingProcess);
+    return null;
+  }
+
+  return recordingProcess;
+}
+
+function registerRecordingLifecycle(
+  udid: string,
+  recordingProcess: ChildProcessWithoutNullStreams
+): void {
+  const cleanup = () => {
+    clearTrackedRecording(udid, recordingProcess);
+  };
+
+  recordingProcess.once("exit", cleanup);
+  recordingProcess.once("error", cleanup);
+}
+
+async function waitForRecordingStartup(
+  recordingProcess: ChildProcessWithoutNullStreams
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let errorOutput = "";
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      recordingProcess.stderr.off("data", onStderr);
+      recordingProcess.off("error", onError);
+      recordingProcess.off("exit", onExit);
+    };
+
+    const settle = (fn: () => void) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      fn();
+    };
+
+    const onStderr = (data: Buffer) => {
+      const message = data.toString();
+
+      if (message.includes("Recording started")) {
+        settle(() => resolve());
+        return;
+      }
+
+      errorOutput += message;
+    };
+
+    const onError = (error: Error) => {
+      settle(() => reject(new Error(errorOutput.trim() || error.message)));
+    };
+
+    const onExit = (
+      code: number | null,
+      signal: NodeJS.Signals | null
+    ) => {
+      const reason =
+        errorOutput.trim() ||
+        `Recording process terminated unexpectedly${
+          code !== null
+            ? ` with exit code ${code}`
+            : signal
+              ? ` with signal ${signal}`
+              : ""
+        }`;
+
+      settle(() => reject(new Error(reason)));
+    };
+
+    const timeout = setTimeout(() => {
+      if (isChildProcessFinished(recordingProcess)) {
+        onExit(recordingProcess.exitCode, recordingProcess.signalCode);
+        return;
+      }
+
+      settle(() => resolve());
+    }, RECORDING_START_TIMEOUT_MS);
+
+    recordingProcess.stderr.on("data", onStderr);
+    recordingProcess.once("error", onError);
+    recordingProcess.once("exit", onExit);
+  });
+}
+
+async function waitForRecordingToFinalize(
+  recordingProcess: ChildProcessWithoutNullStreams
+): Promise<void> {
+  if (isChildProcessFinished(recordingProcess)) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timeout);
+      recordingProcess.off("exit", onExit);
+      recordingProcess.off("error", onError);
+    };
+
+    const onExit = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(
+        new Error(
+          `Recording process did not exit within ${RECORDING_STOP_FINALIZATION_TIMEOUT_MS}ms after SIGINT`
+        )
+      );
+    }, RECORDING_STOP_FINALIZATION_TIMEOUT_MS);
+
+    recordingProcess.once("exit", onExit);
+    recordingProcess.once("error", onError);
+  });
+}
+
 if (!isToolFiltered("screenshot")) {
   server.tool(
     "screenshot",
@@ -2483,6 +2642,11 @@ if (!isToolFiltered("record_video")) {
     "record_video",
     "Records a video of the iOS Simulator using simctl directly",
     {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
       output_path: z
         .string()
         .max(1024)
@@ -2516,16 +2680,30 @@ if (!isToolFiltered("record_video")) {
         ),
     },
     { title: "Record Video", readOnlyHint: false, openWorldHint: true },
-    async ({ output_path, codec, display, mask, force }) => {
+    async ({ udid, output_path, codec, display, mask, force }) => {
+      let actualUdid: string | null = null;
+      let recordingProcess: ChildProcessWithoutNullStreams | null = null;
+
       try {
+        actualUdid = await getBootedDeviceId(udid);
+
+        if (
+          getTrackedRecording(actualUdid) ||
+          recordingStartupReservationsByUdid.has(actualUdid)
+        ) {
+          throw new Error(
+            `A recording is already active or starting for simulator ${actualUdid} in this server instance`
+          );
+        }
+
         const defaultFileName = `simulator_recording_${Date.now()}.mp4`;
         const outputFile = ensureAbsolutePath(output_path ?? defaultFileName);
+        recordingStartupReservationsByUdid.add(actualUdid);
 
-        // Start the recording process
-        const recordingProcess = spawn("xcrun", [
+        recordingProcess = spawn("xcrun", [
           "simctl",
           "io",
-          "booted",
+          actualUdid,
           "recordVideo",
           ...(codec ? [`--codec=${codec}`] : []),
           ...(display ? [`--display=${display}`] : []),
@@ -2537,40 +2715,30 @@ if (!isToolFiltered("record_video")) {
           "--",
           outputFile,
         ]);
+        registerRecordingLifecycle(actualUdid, recordingProcess);
 
-        // Wait for recording to start
-        await new Promise((resolve, reject) => {
-          let errorOutput = "";
-
-          recordingProcess.stderr.on("data", (data) => {
-            const message = data.toString();
-            if (message.includes("Recording started")) {
-              resolve(true);
-            } else {
-              errorOutput += message;
-            }
-          });
-
-          // Set timeout for start verification
-          setTimeout(() => {
-            if (recordingProcess.killed) {
-              reject(new Error("Recording process terminated unexpectedly"));
-            } else {
-              resolve(true);
-            }
-          }, 3000);
-        });
+        await waitForRecordingStartup(recordingProcess);
+        activeRecordingsByUdid.set(actualUdid, recordingProcess);
+        recordingStartupReservationsByUdid.delete(actualUdid);
 
         return {
           isError: false,
           content: [
             {
               type: "text",
-              text: `Recording started. The video will be saved to: ${outputFile}\nTo stop recording, use the stop_recording command.`,
+              text: `Recording started for simulator ${actualUdid}. The video will be saved to: ${outputFile}\nTo stop recording, use stop_recording with the same udid: ${actualUdid}.`,
             },
           ],
         };
       } catch (error) {
+        if (recordingProcess && !isChildProcessFinished(recordingProcess)) {
+          recordingProcess.kill("SIGINT");
+        }
+
+        if (actualUdid) {
+          clearTrackedRecording(actualUdid, recordingProcess ?? undefined);
+        }
+
         return {
           isError: true,
           content: [
@@ -2590,22 +2758,48 @@ if (!isToolFiltered("record_video")) {
 if (!isToolFiltered("stop_recording")) {
   server.tool(
     "stop_recording",
-    "Stops the simulator video recording using killall",
-    {},
+    "Stops a tracked simulator video recording for the targeted iOS Simulator",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+    },
     { title: "Stop Recording", readOnlyHint: false, openWorldHint: true },
-    async () => {
-      try {
-        await run("pkill", ["-SIGINT", "-f", "simctl.*recordVideo"]);
+    async ({ udid }) => {
+      let actualUdid: string | null = null;
+      let recordingProcess: ChildProcessWithoutNullStreams | null = null;
 
-        // Wait a moment for the video to finalize
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+      try {
+        actualUdid = await getBootedDeviceId(udid);
+        recordingProcess = getTrackedRecording(actualUdid);
+
+        if (!recordingProcess) {
+          throw new Error(
+            `No active recording is tracked for simulator ${actualUdid} in this server instance`
+          );
+        }
+
+        const signalSent = recordingProcess.kill("SIGINT");
+        if (!signalSent && !isChildProcessFinished(recordingProcess)) {
+          throw new Error(
+            `Failed to send SIGINT to the recording process for simulator ${actualUdid}`
+          );
+        }
+
+        try {
+          await waitForRecordingToFinalize(recordingProcess);
+        } finally {
+          clearTrackedRecording(actualUdid, recordingProcess);
+        }
 
         return {
           isError: false,
           content: [
             {
               type: "text",
-              text: "Recording stopped successfully.",
+              text: `Recording stopped successfully for simulator ${actualUdid}.`,
             },
           ],
         };

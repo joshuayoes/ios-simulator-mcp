@@ -9,8 +9,8 @@ You can run a test case copy and pasting the test case into a chat in an MCP cli
 **Note:** This test case was written using iOS 17.2 and the native Photos app. It may need to be adjusted for other iOS versions or Photos app changes.
 
 1. Have the user open the native Photo app in the iOS simulator.
-2. Call `get_booted_sim_ids` to get the names and UDIDs of the booted simulators, then use the simulator under test.
-3. Call `record_video` to start recording a screen recording of the test.
+2. Call `get_booted_sim_ids` to get the names and UDIDs of the booted simulators, choose the simulator under test, and keep that UDID handy for the recording steps below.
+3. Call `record_video` with the chosen simulator UDID to start recording a screen recording of the test.
 4. Call `ui_describe_all` to make sure we are on the All Photos tab.
 5. Call `ui_find_element` with `{ "search": ["Search"], "type": "Button" }` to find the Search tab button by its label.
 6. Call `ui_describe_point` to verify the coordinates returned by `ui_find_element` for the Search tab button.
@@ -24,7 +24,7 @@ You can run a test case copy and pasting the test case into a chat in an MCP cli
 14. Call `ui_describe_all` to describe the page and see we are the All Photos tab.
 15. Call `screenshot` to take a screenshot of the current page.
 16. Call `ui_view` to view the current page.
-17. Call `stop_recording` to stop the screen recording.
+17. Call `stop_recording` with the same simulator UDID to stop the screen recording.
 
 ## Test Case: Landscape orientation
 

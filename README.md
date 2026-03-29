@@ -329,6 +329,10 @@ After a feature implementation, instruct your AI assistant within its MCP client
 - [Xcode](https://developer.apple.com/xcode/resources/) and iOS simulators installed
 - Facebook [IDB](https://fbidb.io/) tool [(see install guide)](https://fbidb.io/docs/installation)
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/ios-simulator-mcp).
+
 ## Installation
 
 This section provides instructions for integrating the iOS Simulator MCP server with different Model Context Protocol (MCP) clients.

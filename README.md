@@ -19,7 +19,7 @@ This project has been featured and mentioned in various publications and resourc
 
 ## Tools
 
-> Orientation note: `ui_describe_all`, `ui_find_element`, `ui_describe_point`, `ui_tap`, `ui_swipe`, `ui_view`, and `screenshot` all use the current presented Simulator orientation. In landscape, the returned frames, accepted coordinates, and captured images stay aligned with each other.
+> Orientation note: `ui_describe_all`, `ui_find_element`, `ui_describe_point`, `ui_tap`, `ui_swipe`, `read_screen`, and `screenshot` all use the current presented Simulator orientation. In landscape, the returned frames, accepted coordinates, and captured images stay aligned with each other.
 
 ### `get_booted_sim_ids`
 
@@ -181,9 +181,9 @@ This project has been featured and mentioned in various publications and resourc
 }
 ```
 
-### `ui_view`
+### `read_screen`
 
-**Description:** Get the image content of a compressed screenshot of the targeted simulator view
+**Description:** Return the current simulator screen as an image for visual inspection. Use this when you need to understand or inspect what is currently on screen. If you need to save an image file to disk, use `screenshot` instead.
 
 **Parameters:**
 
@@ -199,7 +199,7 @@ This project has been featured and mentioned in various publications and resourc
 
 ### `screenshot`
 
-**Description:** Takes a screenshot of the iOS Simulator
+**Description:** Save the current simulator screen to an image file on disk. Use this only when you need a persistent file or artifact. If you need to inspect the current screen, use `read_screen` instead.
 
 **Parameters:**
 
@@ -344,7 +344,7 @@ After a feature implementation, instruct your AI assistant within its MCP client
 - **Show Your AI Agent the Simulator Screen:**
 
   ```
-  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `ui_view` with that `udid` to view the simulator screen
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `read_screen` with that `udid` to view the simulator screen
   ```
 
 - **Take Screenshot:**

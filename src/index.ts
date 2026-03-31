@@ -2272,17 +2272,17 @@ if (!isToolFiltered("ui_find_element")) {
   );
 }
 
-if (!isToolFiltered("ui_view")) {
+if (!isToolFiltered("read_screen")) {
   server.tool(
-    "ui_view",
-    "Get the image content of a compressed screenshot of the targeted simulator view",
+    "read_screen",
+    "Return the current simulator screen as an image for visual inspection. Use this when you need to understand or inspect what is currently on screen. If you need to save an image file to disk, use screenshot instead.",
     {
       udid: z
         .string()
         .regex(UDID_REGEX)
         .describe("UDID of target simulator"),
     },
-    { title: "View Screenshot", readOnlyHint: true, openWorldHint: true },
+    { title: "Read screen", readOnlyHint: true, openWorldHint: true },
     async ({ udid }) => {
       try {
         const { transform } = await getUiInteractionContext(udid);
@@ -2533,7 +2533,7 @@ async function waitForRecordingToFinalize(
 if (!isToolFiltered("screenshot")) {
   server.tool(
     "screenshot",
-    "Takes a screenshot of the iOS Simulator",
+    "Save the current simulator screen to an image file on disk. Use this only when you need a persistent file or artifact. If you need to inspect the current screen, use read_screen instead.",
     {
       udid: z
         .string()
@@ -2564,7 +2564,7 @@ if (!isToolFiltered("screenshot")) {
           "For non-rectangular displays, handle the mask by policy (ignored, alpha, or black)"
         ),
     },
-    { title: "Take Screenshot", readOnlyHint: false, openWorldHint: true },
+    { title: "Save screenshot", readOnlyHint: false, openWorldHint: true },
     async ({ udid, output_path, type, display, mask }) => {
       try {
         const absolutePath = ensureAbsolutePath(output_path);

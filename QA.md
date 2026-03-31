@@ -23,7 +23,7 @@ You can run a test case copy and pasting the test case into a chat in an MCP cli
 13. Call `ui_swipe` with the chosen simulator UDID to swipe from the center of the screen down to dismiss the photo and go back to the All Photos tab.
 14. Call `ui_describe_all` with the chosen simulator UDID to describe the page and see we are the All Photos tab.
 15. Call `screenshot` with the chosen simulator UDID to take a screenshot of the current page.
-16. Call `ui_view` with the chosen simulator UDID to view the current page.
+16. Call `read_screen` with the chosen simulator UDID to view the current page.
 17. Call `stop_recording` with the same simulator UDID to stop the screen recording.
 
 ## Test Case: Landscape orientation
@@ -32,10 +32,10 @@ You can run a test case copy and pasting the test case into a chat in an MCP cli
 
 1. Have the user open the iPad Simulator in landscape and show the Home Screen or Photos app.
 2. Call `get_booted_sim_ids` and pick the landscape simulator under test.
-3. Call `ui_view` with the chosen simulator UDID and verify the returned image is landscape-shaped and matches the presented Simulator orientation.
+3. Call `read_screen` with the chosen simulator UDID and verify the returned image is landscape-shaped and matches the presented Simulator orientation.
 4. Call `ui_describe_all` with the chosen simulator UDID and confirm the root `frame` dimensions are landscape-oriented.
 5. Call `ui_find_element` with the chosen simulator UDID to locate a visible element in the current landscape view.
 6. Use the returned frame coordinates with `ui_tap` and the chosen simulator UDID to verify the visible element is activated.
 7. Call `ui_describe_point` with the chosen simulator UDID and a point chosen from the visible landscape image, then confirm it identifies the expected element.
 8. Call `ui_swipe` with the chosen simulator UDID and a vertical swipe in the visible landscape image, then confirm the gesture moves in the expected on-screen direction.
-9. Call `screenshot` with the chosen simulator UDID and verify the saved file matches the same presented landscape orientation as `ui_view`.
+9. Call `screenshot` with the chosen simulator UDID and verify the saved file matches the same presented landscape orientation as `read_screen`.

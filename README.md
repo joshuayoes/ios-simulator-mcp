@@ -286,6 +286,8 @@ This project has been featured and mentioned in various publications and resourc
    * Format: UUID (8-4-4-4-12 hexadecimal characters)
    */
   udid: string;
+  /** Bake the saved video into the simulator's displayed orientation before returning. Defaults to true. Falls back to a slower built-in macOS exporter when ffmpeg is unavailable. */
+  fix_rotation?: boolean;
 }
 ```
 
@@ -388,7 +390,7 @@ After a feature implementation, instruct your AI assistant within its MCP client
 - **Stop Recording:**
 
   ```
-  Call `get_booted_sim_ids`, choose the same simulator `udid` used for recording, then use `stop_recording` with that `udid`
+  Call `get_booted_sim_ids`, choose the same simulator `udid` used for recording, then use `stop_recording` with that `udid` (it bakes the video into the simulator's displayed orientation by default)
   ```
 
 - **Install App:**

@@ -51,9 +51,10 @@ const parsedWdaPort = Number.parseInt(
 );
 const WDA_PORT_START = Number.isFinite(parsedWdaPort) ? parsedWdaPort : 8100;
 const wdaPortsByDeviceId = new Map<string, number>();
-const activeRecordingsByUdid = new Map<string, ChildProcessWithoutNullStreams>();
+const activeRecordingsByUdid = new Map<string, ActiveRecording>();
 const recordingStartupReservationsByUdid = new Set<string>();
 let wdaPortLock = Promise.resolve();
+let swiftVideoRotationScriptPath: string | null = null;
 const ERROR_SUMMARY_MAX_CHARS = 300;
 const RECORDING_START_TIMEOUT_MS = 3000;
 const RECORDING_STOP_FINALIZATION_TIMEOUT_MS = 3000;
@@ -228,6 +229,12 @@ type SimctlListDevicesResponse = {
 
 type RotationAngle = -90 | 0 | 90 | 180;
 
+type ActiveRecording = {
+  outputFile: string;
+  process: ChildProcessWithoutNullStreams;
+  startRotationAngle: RotationAngle | null;
+};
+
 type BootedDeviceDetails = BootedDevice & {
   runtimeIdentifier: string;
 };
@@ -311,6 +318,14 @@ type OrientationProbe = {
   frame: UiFrame;
   label: string | null;
   point: UiPoint;
+};
+
+type VideoRotationMethod = "ffmpeg" | "swift";
+
+type VideoRotationResult = {
+  applied: boolean;
+  method?: VideoRotationMethod;
+  note?: string;
 };
 
 const ROTATION_ANGLE_CANDIDATES: RotationAngle[] = [0, 90, -90, 180];
@@ -1014,6 +1029,298 @@ function createTempFilePath(prefix: string, extension: string): string {
     TMP_ROOT_DIR,
     `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}.${extension}`
   );
+}
+
+function createSiblingTempFilePath(filePath: string, label: string): string {
+  const extension = path.extname(filePath);
+  const baseName = extension ? path.basename(filePath, extension) : path.basename(filePath);
+
+  return path.join(
+    path.dirname(filePath),
+    `${baseName}.${label}-${Date.now()}-${Math.random().toString(16).slice(2)}${extension}`
+  );
+}
+
+async function commandExists(commandName: string): Promise<boolean> {
+  try {
+    await run("which", [commandName]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getFfmpegRotationFilter(rotationAngle: RotationAngle): string | null {
+  switch (rotationAngle) {
+    case 90:
+      return "transpose=clock";
+    case -90:
+      return "transpose=cclock";
+    case 180:
+      return "hflip,vflip";
+    default:
+      return null;
+  }
+}
+
+const SWIFT_VIDEO_ROTATION_SCRIPT = String.raw`import Foundation
+import AVFoundation
+import CoreGraphics
+
+func usage() -> Never {
+  fputs("usage: rotate-video.swift <input> <output> <angle>\n", stderr)
+  exit(2)
+}
+
+guard CommandLine.arguments.count == 4 else { usage() }
+let inputURL = URL(fileURLWithPath: CommandLine.arguments[1])
+let outputURL = URL(fileURLWithPath: CommandLine.arguments[2])
+guard let angle = Int(CommandLine.arguments[3]) else { usage() }
+
+let asset = AVURLAsset(url: inputURL)
+let composition = AVMutableComposition()
+
+guard let videoTrack = asset.tracks(withMediaType: .video).first else {
+  throw NSError(domain: "RotateVideo", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing video track"])
+}
+
+guard let compositionVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+  throw NSError(domain: "RotateVideo", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not create video track"])
+}
+
+let duration = asset.duration
+try compositionVideoTrack.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: videoTrack, at: .zero)
+compositionVideoTrack.preferredTransform = .identity
+
+if let audioTrack = asset.tracks(withMediaType: .audio).first,
+   let compositionAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+  try compositionAudioTrack.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: audioTrack, at: .zero)
+}
+
+let naturalSize = videoTrack.naturalSize
+let videoComposition = AVMutableVideoComposition()
+let nominalFrameRate = videoTrack.nominalFrameRate
+videoComposition.frameDuration = nominalFrameRate > 0
+  ? CMTime(value: 1, timescale: CMTimeScale(nominalFrameRate.rounded()))
+  : CMTime(value: 1, timescale: 30)
+
+let instruction = AVMutableVideoCompositionInstruction()
+instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionVideoTrack)
+
+let transform: CGAffineTransform
+switch angle {
+case 90:
+  videoComposition.renderSize = CGSize(width: naturalSize.height, height: naturalSize.width)
+  transform = CGAffineTransform(translationX: naturalSize.height, y: 0).rotated(by: .pi / 2)
+case -90:
+  videoComposition.renderSize = CGSize(width: naturalSize.height, height: naturalSize.width)
+  transform = CGAffineTransform(translationX: 0, y: naturalSize.width).rotated(by: -.pi / 2)
+case 180:
+  videoComposition.renderSize = CGSize(width: naturalSize.width, height: naturalSize.height)
+  transform = CGAffineTransform(translationX: naturalSize.width, y: naturalSize.height).rotated(by: .pi)
+case 0:
+  videoComposition.renderSize = naturalSize
+  transform = .identity
+default:
+  throw NSError(domain: "RotateVideo", code: 3, userInfo: [NSLocalizedDescriptionKey: "Unsupported angle \(angle)"])
+}
+
+layerInstruction.setTransform(transform, at: .zero)
+instruction.layerInstructions = [layerInstruction]
+videoComposition.instructions = [instruction]
+
+if FileManager.default.fileExists(atPath: outputURL.path) {
+  try FileManager.default.removeItem(at: outputURL)
+}
+
+guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+  throw NSError(domain: "RotateVideo", code: 4, userInfo: [NSLocalizedDescriptionKey: "Could not create export session"])
+}
+exportSession.outputURL = outputURL
+exportSession.outputFileType = .mp4
+exportSession.shouldOptimizeForNetworkUse = true
+exportSession.videoComposition = videoComposition
+
+let semaphore = DispatchSemaphore(value: 0)
+var exportError: Error?
+exportSession.exportAsynchronously {
+  exportError = exportSession.error
+  semaphore.signal()
+}
+semaphore.wait()
+
+if let exportError {
+  throw exportError
+}
+if exportSession.status != .completed {
+  throw NSError(domain: "RotateVideo", code: 5, userInfo: [NSLocalizedDescriptionKey: "Export failed with status \(exportSession.status.rawValue)"])
+}
+`;
+
+async function getSwiftVideoRotationScriptPath(): Promise<string> {
+  if (swiftVideoRotationScriptPath) {
+    return swiftVideoRotationScriptPath;
+  }
+
+  const scriptPath = createTempFilePath("rotate-video", "swift");
+  await fs.promises.writeFile(scriptPath, SWIFT_VIDEO_ROTATION_SCRIPT, "utf8");
+  swiftVideoRotationScriptPath = scriptPath;
+
+  return scriptPath;
+}
+
+async function bakeVideoRotationWithFfmpeg(
+  inputPath: string,
+  outputPath: string,
+  rotationAngle: RotationAngle
+): Promise<void> {
+  const filter = getFfmpegRotationFilter(rotationAngle);
+  if (!filter) {
+    await fs.promises.copyFile(inputPath, outputPath);
+    return;
+  }
+
+  await run("ffmpeg", [
+    "-y",
+    "-nostdin",
+    "-v",
+    "error",
+    "-i",
+    inputPath,
+    "-vf",
+    filter,
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-crf",
+    "18",
+    "-c:a",
+    "copy",
+    "-movflags",
+    "+faststart",
+    outputPath,
+  ]);
+}
+
+async function bakeVideoRotationWithSwift(
+  inputPath: string,
+  outputPath: string,
+  rotationAngle: RotationAngle
+): Promise<void> {
+  const scriptPath = await getSwiftVideoRotationScriptPath();
+  await run("xcrun", [
+    "swift",
+    scriptPath,
+    inputPath,
+    outputPath,
+    String(rotationAngle),
+  ]);
+}
+
+async function replaceFileWithTempOutput(
+  tempOutputPath: string,
+  finalOutputPath: string
+): Promise<void> {
+  const backupPath = createSiblingTempFilePath(finalOutputPath, "backup");
+  let originalMoved = false;
+
+  try {
+    await fs.promises.rename(finalOutputPath, backupPath);
+    originalMoved = true;
+    await fs.promises.rename(tempOutputPath, finalOutputPath);
+    await fs.promises.unlink(backupPath).catch(() => {});
+    originalMoved = false;
+  } finally {
+    await fs.promises.unlink(tempOutputPath).catch(() => {});
+
+    if (originalMoved) {
+      await fs.promises.rename(backupPath, finalOutputPath).catch(() => {});
+      await fs.promises.unlink(backupPath).catch(() => {});
+    }
+  }
+}
+
+async function getRecordingStartRotationAngle(
+  deviceId: string
+): Promise<RotationAngle | null> {
+  try {
+    const { transform } = await getUiInteractionContext(deviceId);
+    return transform.rotationAngle;
+  } catch {
+    return null;
+  }
+}
+
+async function bakeRecordedVideoRotation(
+  outputFile: string,
+  startRotationAngle: RotationAngle | null
+): Promise<VideoRotationResult> {
+  if (startRotationAngle === null) {
+    return {
+      applied: false,
+      note:
+        "Rotation fix was skipped because the simulator orientation could not be determined when recording started.",
+    };
+  }
+
+  if (startRotationAngle === 0) {
+    return { applied: false };
+  }
+
+  const tempOutputPath = createSiblingTempFilePath(outputFile, "rotated");
+  const ffmpegInstalled = await commandExists("ffmpeg");
+  let ffmpegFailure: string | null = null;
+
+  if (ffmpegInstalled) {
+    try {
+      await bakeVideoRotationWithFfmpeg(
+        outputFile,
+        tempOutputPath,
+        startRotationAngle
+      );
+      await replaceFileWithTempOutput(tempOutputPath, outputFile);
+
+      return {
+        applied: true,
+        method: "ffmpeg",
+      };
+    } catch (error) {
+      ffmpegFailure = summarizeErrorMessage(describeCommandError(error));
+      await fs.promises.unlink(tempOutputPath).catch(() => {});
+    }
+  }
+
+  try {
+    await bakeVideoRotationWithSwift(
+      outputFile,
+      tempOutputPath,
+      startRotationAngle
+    );
+    await replaceFileWithTempOutput(tempOutputPath, outputFile);
+
+    return {
+      applied: true,
+      method: "swift",
+      note: ffmpegInstalled
+        ? `Fell back to the built-in macOS video exporter after ffmpeg rotation failed: ${ffmpegFailure}.`
+        : "Install ffmpeg to speed up baked video rotation on future recordings.",
+    };
+  } catch (error) {
+    await fs.promises.unlink(tempOutputPath).catch(() => {});
+    const swiftFailure = summarizeErrorMessage(describeCommandError(error));
+
+    if (ffmpegInstalled && ffmpegFailure) {
+      throw new Error(
+        `Failed to bake video rotation with ffmpeg (${ffmpegFailure}) and with the built-in macOS fallback (${swiftFailure})`
+      );
+    }
+
+    throw new Error(
+      `Failed to bake video rotation with the built-in macOS fallback: ${swiftFailure}`
+    );
+  }
 }
 
 async function captureRawSimulatorScreenshot(
@@ -2406,7 +2713,10 @@ function clearTrackedRecording(
   udid: string,
   recordingProcess?: ChildProcessWithoutNullStreams
 ): void {
-  if (!recordingProcess || activeRecordingsByUdid.get(udid) === recordingProcess) {
+  if (
+    !recordingProcess ||
+    activeRecordingsByUdid.get(udid)?.process === recordingProcess
+  ) {
     activeRecordingsByUdid.delete(udid);
   }
 
@@ -2415,19 +2725,19 @@ function clearTrackedRecording(
 
 function getTrackedRecording(
   udid: string
-): ChildProcessWithoutNullStreams | null {
-  const recordingProcess = activeRecordingsByUdid.get(udid);
+): ActiveRecording | null {
+  const recording = activeRecordingsByUdid.get(udid);
 
-  if (!recordingProcess) {
+  if (!recording) {
     return null;
   }
 
-  if (isChildProcessFinished(recordingProcess)) {
-    clearTrackedRecording(udid, recordingProcess);
+  if (isChildProcessFinished(recording.process)) {
+    clearTrackedRecording(udid, recording.process);
     return null;
   }
 
-  return recordingProcess;
+  return recording;
 }
 
 function registerRecordingLifecycle(
@@ -2667,6 +2977,7 @@ if (!isToolFiltered("record_video")) {
     async ({ udid, output_path, codec, display, mask, force }) => {
       let actualUdid: string | null = null;
       let recordingProcess: ChildProcessWithoutNullStreams | null = null;
+      let outputFile: string | null = null;
 
       try {
         actualUdid = udid;
@@ -2681,8 +2992,11 @@ if (!isToolFiltered("record_video")) {
         }
 
         const defaultFileName = `simulator_recording_${Date.now()}.mp4`;
-        const outputFile = ensureAbsolutePath(output_path ?? defaultFileName);
+        outputFile = ensureAbsolutePath(output_path ?? defaultFileName);
         recordingStartupReservationsByUdid.add(actualUdid);
+        const startRotationAnglePromise = getRecordingStartRotationAngle(
+          actualUdid
+        );
 
         recordingProcess = spawn("xcrun", [
           "simctl",
@@ -2702,7 +3016,11 @@ if (!isToolFiltered("record_video")) {
         registerRecordingLifecycle(actualUdid, recordingProcess);
 
         await waitForRecordingStartup(recordingProcess);
-        activeRecordingsByUdid.set(actualUdid, recordingProcess);
+        activeRecordingsByUdid.set(actualUdid, {
+          outputFile,
+          process: recordingProcess,
+          startRotationAngle: await startRotationAnglePromise,
+        });
         recordingStartupReservationsByUdid.delete(actualUdid);
 
         return {
@@ -2748,22 +3066,29 @@ if (!isToolFiltered("stop_recording")) {
         .string()
         .regex(UDID_REGEX)
         .describe("UDID of target simulator"),
+      fix_rotation: z
+        .boolean()
+        .optional()
+        .describe(
+          "Bake the saved video into the simulator's displayed orientation before returning. Defaults to true. Falls back to a slower built-in macOS exporter when ffmpeg is unavailable."
+        ),
     },
     { title: "Stop Recording", readOnlyHint: false, openWorldHint: true },
-    async ({ udid }) => {
+    async ({ udid, fix_rotation }) => {
       let actualUdid: string | null = null;
-      let recordingProcess: ChildProcessWithoutNullStreams | null = null;
+      let recording: ActiveRecording | null = null;
 
       try {
         actualUdid = udid;
-        recordingProcess = getTrackedRecording(actualUdid);
+        recording = getTrackedRecording(actualUdid);
 
-        if (!recordingProcess) {
+        if (!recording) {
           throw new Error(
             `No active recording is tracked for simulator ${actualUdid} in this server instance`
           );
         }
 
+        const recordingProcess = recording.process;
         const signalSent = recordingProcess.kill("SIGINT");
         if (!signalSent && !isChildProcessFinished(recordingProcess)) {
           throw new Error(
@@ -2777,12 +3102,36 @@ if (!isToolFiltered("stop_recording")) {
           clearTrackedRecording(actualUdid, recordingProcess);
         }
 
+        let text = `Recording stopped successfully for simulator ${actualUdid}. The video was saved to: ${recording.outputFile}`;
+
+        if (fix_rotation !== false) {
+          try {
+            const rotationResult = await bakeRecordedVideoRotation(
+              recording.outputFile,
+              recording.startRotationAngle
+            );
+
+            if (rotationResult.applied) {
+              text +=
+                rotationResult.method === "ffmpeg"
+                  ? "\nBaked rotation was applied automatically using ffmpeg."
+                  : "\nBaked rotation was applied automatically using the built-in macOS video exporter.";
+            }
+
+            if (rotationResult.note) {
+              text += `\n${rotationResult.note}`;
+            }
+          } catch (rotationError) {
+            text += `\nRotation fix failed after the recording was saved: ${toError(rotationError).message}`;
+          }
+        }
+
         return {
           isError: false,
           content: [
             {
               type: "text",
-              text: `Recording stopped successfully for simulator ${actualUdid}.`,
+              text,
             },
           ],
         };

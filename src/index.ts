@@ -124,6 +124,13 @@ const FILTERED_TOOLS =
 
 // Function to check if a tool is filtered
 function isToolFiltered(toolName: string): boolean {
+  if (
+    (toolName === "ui_swipe_wda" || toolName === "ui_swipe_legacy") &&
+    FILTERED_TOOLS.includes("ui_swipe")
+  ) {
+    return true;
+  }
+
   return FILTERED_TOOLS.includes(toolName);
 }
 
@@ -1347,6 +1354,27 @@ async function performIdbSwipe(
   }
 }
 
+async function getRawSwipePoints(
+  udid: string,
+  xStart: number,
+  yStart: number,
+  xEnd: number,
+  yEnd: number
+): Promise<{
+  rawStartPoint: { x: number; y: number };
+  rawEndPoint: { x: number; y: number };
+}> {
+  const { transform } = await getUiInteractionContext(udid);
+  const rawStartPoint = roundUiPoint(
+    transformPointToRaw({ x: xStart, y: yStart }, transform)
+  );
+  const rawEndPoint = roundUiPoint(
+    transformPointToRaw({ x: xEnd, y: yEnd }, transform)
+  );
+
+  return { rawStartPoint, rawEndPoint };
+}
+
 async function launchAppOnSimulator(
   deviceId: string,
   bundleId: string,
@@ -1611,14 +1639,14 @@ async function getWdaPortForSwipe(
   if (!restoreAppBundleId) {
     return {
       port: null,
-      reason: `WebDriverAgent is not running on simulator ${deviceId}. Re-run ui_swipe with \`restore_app_bundle_id\` set to the exact app bundle identifier that should return to the foreground after WebDriverAgent launches.`,
+      reason: `WebDriverAgent is not running on simulator ${deviceId}. Re-run with \`restore_app_bundle_id\` set to the exact app bundle identifier that should return to the foreground after WebDriverAgent launches.`,
     };
   }
 
   if (restoreAppBundleId === WDA_BUNDLE_ID) {
     return {
       port: null,
-      reason: `The \`restore_app_bundle_id\` cannot be ${WDA_BUNDLE_ID}. Re-run ui_swipe with the app bundle identifier that should return to the foreground after WebDriverAgent launches.`,
+      reason: `The \`restore_app_bundle_id\` cannot be ${WDA_BUNDLE_ID}. Re-run with the app bundle identifier that should return to the foreground after WebDriverAgent launches.`,
     };
   }
 
@@ -1905,22 +1933,16 @@ if (!isToolFiltered("ui_type")) {
   );
 }
 
-if (!isToolFiltered("ui_swipe")) {
+if (!isToolFiltered("ui_swipe_wda")) {
   server.tool(
-    "ui_swipe",
-    "Swipe on the screen in the iOS Simulator",
+    "ui_swipe_wda",
+    "Swipe on the screen in the iOS Simulator using WebDriverAgent",
     {
       duration: z
         .string()
         .regex(/^\d+(\.\d+)?$/)
         .optional()
         .describe("Swipe duration in seconds (defaults to 1.0)"),
-      enable_fallback: z
-        .boolean()
-        .optional()
-        .describe(
-          "Allow falling back to the legacy IDB swipe when WebDriverAgent is unavailable or fails (defaults to false)"
-        ),
       restore_app_bundle_id: z
         .string()
         .max(256)
@@ -1936,125 +1958,124 @@ if (!isToolFiltered("ui_swipe")) {
       y_start: z.number().describe("The starting y-coordinate"),
       x_end: z.number().describe("The ending x-coordinate"),
       y_end: z.number().describe("The ending y-coordinate"),
-      delta: z
-        .number()
-        .optional()
-        .describe(
-          "Optional legacy IDB step size between touch points; requires enable_fallback=true"
-        ),
     },
-    { title: "UI Swipe", readOnlyHint: false, openWorldHint: true },
+    { title: "UI Swipe (WDA)", readOnlyHint: false, openWorldHint: true },
     async ({
       duration,
-      enable_fallback,
       restore_app_bundle_id,
       udid,
       x_start,
       y_start,
       x_end,
       y_end,
-      delta,
     }) => {
       try {
-        const fallbackEnabled = enable_fallback ?? false;
-        const swipeDurationSeconds = getSwipeDurationSeconds(duration);
         const swipeDurationMs = getSwipeDurationMs(duration);
-        const { transform } = await getUiInteractionContext(udid);
-        const rawStartPoint = roundUiPoint(
-          transformPointToRaw({ x: x_start, y: y_start }, transform)
+        const { rawStartPoint, rawEndPoint } = await getRawSwipePoints(
+          udid,
+          x_start,
+          y_start,
+          x_end,
+          y_end
         );
-        const rawEndPoint = roundUiPoint(
-          transformPointToRaw({ x: x_end, y: y_end }, transform)
-        );
+        const wdaResult = await getWdaPortForSwipe(udid, restore_app_bundle_id);
 
-        if (delta !== undefined && !fallbackEnabled) {
+        if (wdaResult.port === null) {
           throw new Error(
-            "The `delta` option only works with the legacy IDB swipe. Re-run with `enable_fallback=true` to use it."
+            `${wdaResult.reason}. To explicitly use the legacy backend, call \`ui_swipe_legacy\`.`
           );
         }
 
-        if (delta === undefined) {
-          const wdaResult = await getWdaPortForSwipe(
-            udid,
-            restore_app_bundle_id
-          );
-
-          if (wdaResult.port !== null) {
-            try {
-              await performWdaSwipe(
-                wdaResult.port,
-                udid,
-                rawStartPoint.x,
-                rawStartPoint.y,
-                rawEndPoint.x,
-                rawEndPoint.y,
-                swipeDurationMs
-              );
-
-              return {
-                isError: false,
-                content: [
-                  {
-                    type: "text",
-                    text: `Swiped successfully using WebDriverAgent on simulator ${udid} via port ${wdaResult.port}`,
-                  },
-                ],
-              };
-            } catch (error) {
-              const detailedError = describeCommandError(error);
-
-              if (!fallbackEnabled) {
-                throw new Error(
-                  `WebDriverAgent swipe failed: ${detailedError}. Re-run with \`enable_fallback=true\` to use the legacy IDB swipe.`
-                );
-              }
-
-              await performIdbSwipe(
-                udid,
-                rawStartPoint.x,
-                rawStartPoint.y,
-                rawEndPoint.x,
-                rawEndPoint.y,
-                swipeDurationSeconds,
-                delta
-              );
-
-              return {
-                isError: false,
-                content: [
-                  {
-                    type: "text",
-                    text: `Swiped successfully using the legacy IDB fallback after WebDriverAgent failed: ${detailedError}`,
-                  },
-                ],
-              };
-            }
-          }
-
-          if (!fallbackEnabled) {
-            throw new Error(`${wdaResult.reason}. Re-run with \`enable_fallback=true\` to use the legacy IDB swipe.`);
-          }
-
-          await performIdbSwipe(
+        try {
+          await performWdaSwipe(
+            wdaResult.port,
             udid,
             rawStartPoint.x,
             rawStartPoint.y,
             rawEndPoint.x,
             rawEndPoint.y,
-            swipeDurationSeconds,
-            delta
+            swipeDurationMs
           );
-
-          return {
-            isError: false,
-            content: [
-              {
-                type: "text",
-                text: `Swiped successfully using the legacy IDB fallback because WebDriverAgent was unavailable: ${wdaResult.reason}`,
-              },
-            ],
-          };
+        } catch (error) {
+          throw new Error(
+            `WebDriverAgent swipe failed: ${describeCommandError(
+              error
+            )}. To explicitly use the legacy backend, call \`ui_swipe_legacy\`.`
+          );
         }
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `Swiped successfully using WebDriverAgent on simulator ${udid} via port ${wdaResult.port}`,
+            },
+          ],
+        };
+      } catch (error) {
+        const detailedError = describeCommandError(error);
+        const logPath = await writeTempLog(
+          "ui-swipe-wda-error",
+          `Error swiping on the screen with WebDriverAgent: ${detailedError}`
+        );
+
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error swiping on the screen with WebDriverAgent: ${summarizeErrorMessage(
+                  detailedError
+                )}. Full log written to: ${logPath}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("ui_swipe_legacy")) {
+  server.tool(
+    "ui_swipe_legacy",
+    "Swipe on the screen in the iOS Simulator using the legacy IDB backend",
+    {
+      duration: z
+        .string()
+        .regex(/^\d+(\.\d+)?$/)
+        .optional()
+        .describe("Swipe duration in seconds (defaults to 1.0)"),
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .describe("UDID of target simulator"),
+      x_start: z.number().describe("The starting x-coordinate"),
+      y_start: z.number().describe("The starting y-coordinate"),
+      x_end: z.number().describe("The ending x-coordinate"),
+      y_end: z.number().describe("The ending y-coordinate"),
+      delta: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          "Optional advanced legacy IDB step size in pixels between touch points"
+        ),
+    },
+    { title: "UI Swipe (Legacy)", readOnlyHint: false, openWorldHint: true },
+    async ({ duration, udid, x_start, y_start, x_end, y_end, delta }) => {
+      try {
+        const swipeDurationSeconds = getSwipeDurationSeconds(duration);
+        const { rawStartPoint, rawEndPoint } = await getRawSwipePoints(
+          udid,
+          x_start,
+          y_start,
+          x_end,
+          y_end
+        );
 
         await performIdbSwipe(
           udid,
@@ -2071,15 +2092,15 @@ if (!isToolFiltered("ui_swipe")) {
           content: [
             {
               type: "text",
-              text: "Swiped successfully using the legacy IDB fallback",
+              text: `Swiped successfully using legacy IDB on simulator ${udid}`,
             },
           ],
         };
       } catch (error) {
         const detailedError = describeCommandError(error);
         const logPath = await writeTempLog(
-          "ui-swipe-error",
-          `Error swiping on the screen: ${detailedError}`
+          "ui-swipe-legacy-error",
+          `Error swiping on the screen with legacy IDB: ${detailedError}`
         );
 
         return {
@@ -2088,7 +2109,7 @@ if (!isToolFiltered("ui_swipe")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error swiping on the screen: ${summarizeErrorMessage(
+                `Error swiping on the screen with legacy IDB: ${summarizeErrorMessage(
                   detailedError
                 )}. Full log written to: ${logPath}`
               ),

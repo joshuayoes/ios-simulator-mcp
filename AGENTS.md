@@ -43,7 +43,8 @@ The server provides these tools (can be filtered via environment variables):
 - `ui_describe_all` - Get accessibility info for the entire screen
 - `ui_tap` - Tap at coordinates
 - `ui_type` - Input text
-- `ui_swipe` - Swipe gesture
+- `ui_swipe_wda` - Swipe gesture using WebDriverAgent only
+- `ui_swipe_legacy` - Swipe gesture using the legacy IDB backend
 - `ui_describe_point` - Get element at specific coordinates
 - `read_screen` - Get compressed screenshot as base64 JPEG
 - `screenshot` - Save screenshot to file

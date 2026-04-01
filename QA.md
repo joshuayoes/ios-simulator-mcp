@@ -20,7 +20,7 @@ You can run a test case copy and pasting the test case into a chat in an MCP cli
 10. Call `ui_describe_all` with the chosen simulator UDID to describe the page and find the first photo result.
 11. Call `ui_describe_point` with the chosen simulator UDID to find the x and y coordinates for the first photo result touchable area.
 12. Call `ui_tap` with the chosen simulator UDID to tap the coordinates of the first photo result touchable area.
-13. Call `ui_swipe` with the chosen simulator UDID to swipe from the center of the screen down to dismiss the photo and go back to the All Photos tab.
+13. Call `ui_swipe_wda` with the chosen simulator UDID to swipe from the center of the screen down to dismiss the photo and go back to the All Photos tab. If WebDriverAgent is not already running, include `restore_app_bundle_id` for the foreground app so it can be restored after launch.
 14. Call `ui_describe_all` with the chosen simulator UDID to describe the page and see we are the All Photos tab.
 15. Call `screenshot` with the chosen simulator UDID to take a screenshot of the current page.
 16. Call `read_screen` with the chosen simulator UDID to view the current page.
@@ -37,5 +37,5 @@ You can run a test case copy and pasting the test case into a chat in an MCP cli
 5. Call `ui_find_element` with the chosen simulator UDID to locate a visible element in the current landscape view.
 6. Use the returned frame coordinates with `ui_tap` and the chosen simulator UDID to verify the visible element is activated.
 7. Call `ui_describe_point` with the chosen simulator UDID and a point chosen from the visible landscape image, then confirm it identifies the expected element.
-8. Call `ui_swipe` with the chosen simulator UDID and a vertical swipe in the visible landscape image, then confirm the gesture moves in the expected on-screen direction.
+8. Call `ui_swipe_legacy` with the chosen simulator UDID and a vertical swipe in the visible landscape image, then confirm the gesture moves in the expected on-screen direction.
 9. Call `screenshot` with the chosen simulator UDID and verify the saved file matches the same presented landscape orientation as `read_screen`.

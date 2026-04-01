@@ -19,7 +19,7 @@ This project has been featured and mentioned in various publications and resourc
 
 ## Tools
 
-> Orientation note: `ui_describe_all`, `ui_find_element`, `ui_describe_point`, `ui_tap`, `ui_swipe`, `read_screen`, and `screenshot` all use the current presented Simulator orientation. In landscape, the returned frames, accepted coordinates, and captured images stay aligned with each other.
+> Orientation note: `ui_describe_all`, `ui_find_element`, `ui_describe_point`, `ui_tap`, `ui_swipe_wda`, `ui_swipe_legacy`, `read_screen`, and `screenshot` all use the current presented Simulator orientation. In landscape, the returned frames, accepted coordinates, and captured images stay aligned with each other.
 
 ### `get_booted_sim_ids`
 
@@ -96,9 +96,9 @@ This project has been featured and mentioned in various publications and resourc
 }
 ```
 
-### `ui_swipe`
+### `ui_swipe_wda`
 
-**Description:** Swipe on the screen in the iOS Simulator
+**Description:** Swipe on the screen in the iOS Simulator using WebDriverAgent
 
 **Parameters:**
 
@@ -108,11 +108,6 @@ This project has been featured and mentioned in various publications and resourc
    * Swipe duration in seconds (decimal numbers allowed, defaults to 1.0)
    */
   duration?: string;
-  /**
-   * Allow falling back to the legacy IDB swipe when WebDriverAgent is
-   * unavailable or fails (defaults to false)
-   */
-  enable_fallback?: boolean;
   /**
    * Required if WebDriverAgent must be launched; app bundle identifier to
    * relaunch after WebDriverAgent starts so the tested app returns to the
@@ -132,7 +127,38 @@ This project has been featured and mentioned in various publications and resourc
   x_end: number;
   /** The ending y-coordinate */
   y_end: number;
-  /** Optional legacy IDB step size between touch points; requires enable_fallback=true */
+}
+```
+
+### `ui_swipe_legacy`
+
+**Description:** Swipe on the screen in the iOS Simulator using the legacy IDB backend
+
+**Parameters:**
+
+```typescript
+{
+  /**
+   * Swipe duration in seconds (decimal numbers allowed, defaults to 1.0)
+   */
+  duration?: string;
+  /**
+   * UDID of target simulator
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid: string;
+  /** The starting x-coordinate */
+  x_start: number;
+  /** The starting y-coordinate */
+  y_start: number;
+  /** The ending x-coordinate */
+  x_end: number;
+  /** The ending y-coordinate */
+  y_end: number;
+  /**
+   * Optional advanced legacy IDB step size in pixels between touch points.
+   * Most callers should omit this.
+   */
   delta?: number;
 }
 ```
@@ -332,7 +358,7 @@ After a feature implementation, instruct your AI assistant within its MCP client
 - **Validate Swipe Action:**
 
   ```
-  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `ui_swipe` with that `udid` to swipe from x=150, y=600 to x=150, y=100 and confirm correct behavior
+  Call `get_booted_sim_ids`, choose a simulator `udid`, then use `ui_swipe_wda` with that `udid` to swipe from x=150, y=600 to x=150, y=100 and confirm correct behavior
   ```
 
 - **Detailed Element Check:**

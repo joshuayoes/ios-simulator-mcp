@@ -62,8 +62,8 @@ extension SimulatorMCPServer {
     func handleUIView(_ args: [String: Value]) async throws -> [Tool.Content] {
         let udid = try await simctl.resolveUDID(args.string("udid"))
 
-        // Get accessibility tree for dimensions and context
-        let uiDescription = try await idb.describeAll(udid: udid)
+        // Get accessibility tree for dimensions and context (via XCTest runner)
+        let uiDescription = try await runner.snapshot(udid: udid)
 
         // Parse screen dimensions from the accessibility tree
         var screenWidth: Int?

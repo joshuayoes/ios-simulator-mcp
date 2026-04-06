@@ -5,7 +5,7 @@ import MCP
 actor SimulatorMCPServer {
     let server: Server
     let simctl: SimctlClient
-    let idb: IDBClient
+    let runner: XCTestRunnerClient
     let filteredTools: Set<String>
     let defaultOutputDir: String
     private var recordingProcess: Process?
@@ -18,7 +18,7 @@ actor SimulatorMCPServer {
             capabilities: .init(tools: .init(listChanged: false))
         )
         self.simctl = SimctlClient()
-        self.idb = IDBClient()
+        self.runner = XCTestRunnerClient(simctl: simctl)
 
         // Parse filtered tools from environment
         if let filtered = ProcessInfo.processInfo.environment["IOS_SIMULATOR_MCP_FILTERED_TOOLS"] {
@@ -48,7 +48,8 @@ actor SimulatorMCPServer {
         await server.waitUntilCompleted()
     }
 
-    func cleanup() {
+    func cleanup() async {
+        await runner.stopRunner()
         if let tempDir = tempDir {
             try? FileManager.default.removeItem(atPath: tempDir)
         }
@@ -112,17 +113,25 @@ actor SimulatorMCPServer {
                 case "shutdown_simulator":
                     return try await handleShutdownSimulator(args)
 
-                // UI Interaction
+                // UI Interaction (via XCTest runner)
                 case "ui_describe_all":
                     return try await handleUIDescribeAll(args)
                 case "ui_describe_point":
                     return try await handleUIDescribePoint(args)
                 case "ui_tap":
                     return try await handleUITap(args)
+                case "ui_double_tap":
+                    return try await handleUIDoubleTap(args)
+                case "ui_long_press":
+                    return try await handleUILongPress(args)
                 case "ui_type":
                     return try await handleUIType(args)
                 case "ui_swipe":
                     return try await handleUISwipe(args)
+                case "ui_find_element":
+                    return try await handleUIFindElement(args)
+                case "ui_press_home":
+                    return try await handleUIPressHome(args)
 
                 // Capture
                 case "ui_view":

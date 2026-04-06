@@ -17,12 +17,16 @@ enum ToolRegistry {
         SimulatorTools.bootSimulator,
         SimulatorTools.shutdownSimulator,
 
-        // UI Interaction
+        // UI Interaction (via XCTest runner — no idb required)
         UITools.uiDescribeAll,
         UITools.uiDescribePoint,
         UITools.uiTap,
+        UITools.uiDoubleTap,
+        UITools.uiLongPress,
         UITools.uiType,
         UITools.uiSwipe,
+        UITools.uiFindElement,
+        UITools.uiPressHome,
 
         // Capture
         CaptureTools.uiView,

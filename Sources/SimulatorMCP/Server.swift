@@ -11,13 +11,15 @@ actor SimulatorMCPServer {
     private var recordingProcess: Process?
     private(set) var tempDir: String?
 
+    /// Production initializer — reads configuration from environment variables.
     init() {
+        let simctl = SimctlClient()
         self.server = Server(
             name: "ios-simulator-mcp",
             version: "2.0.0",
             capabilities: .init(tools: .init(listChanged: false))
         )
-        self.simctl = SimctlClient()
+        self.simctl = simctl
         self.runner = XCTestRunnerClient(simctl: simctl)
 
         // Parse filtered tools from environment
@@ -33,6 +35,19 @@ actor SimulatorMCPServer {
         } else {
             self.defaultOutputDir = NSString(string: "~/Downloads").expandingTildeInPath
         }
+    }
+
+    /// Test initializer — accepts injected dependencies.
+    init(simctl: SimctlClient, runner: XCTestRunnerClient, filteredTools: Set<String> = [], defaultOutputDir: String = "/tmp") {
+        self.server = Server(
+            name: "ios-simulator-mcp",
+            version: "2.0.0",
+            capabilities: .init(tools: .init(listChanged: false))
+        )
+        self.simctl = simctl
+        self.runner = runner
+        self.filteredTools = filteredTools
+        self.defaultOutputDir = defaultOutputDir
     }
 
     // MARK: - Server Lifecycle

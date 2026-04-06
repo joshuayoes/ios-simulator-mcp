@@ -1,0 +1,56 @@
+name: Swift Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Package.swift'
+      - '.github/workflows/swift-test.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Package.swift'
+      - '.github/workflows/swift-test.yml'
+
+jobs:
+  test:
+    name: Swift ${{ matrix.swift }} on macOS
+    runs-on: macos-15
+    strategy:
+      matrix:
+        swift: ['6.0']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app || sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build
+
+      - name: Run tests
+        run: swift test --parallel
+
+  lint:
+    name: Swift Format Check
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check formatting
+        run: |
+          if command -v swift-format &> /dev/null; then
+            swift-format lint --recursive Sources/ Tests/ --strict
+          else
+            echo "swift-format not available, skipping"
+          fi

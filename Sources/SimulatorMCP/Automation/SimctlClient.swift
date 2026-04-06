@@ -1,17 +1,16 @@
 import Foundation
 
 /// Swift wrapper around `xcrun simctl` commands.
-/// Uses `Process` with `shell: false` semantics for security.
+/// Uses `CommandExecuting` protocol for testability — inject a mock in tests.
 actor SimctlClient {
     private let xcrunPath = "/usr/bin/xcrun"
+    private let executor: CommandExecuting
+
+    init(executor: CommandExecuting = ProcessCommandExecutor()) {
+        self.executor = executor
+    }
 
     // MARK: - Command Execution
-
-    struct CommandResult: Sendable {
-        let stdout: String
-        let stderr: String
-        let exitCode: Int32
-    }
 
     /// Execute an xcrun simctl command with the given arguments.
     func run(_ arguments: String...) async throws -> CommandResult {
@@ -20,48 +19,12 @@ actor SimctlClient {
 
     /// Execute an xcrun simctl command with an array of arguments.
     func run(_ arguments: [String]) async throws -> CommandResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: xcrunPath)
-        process.arguments = ["simctl"] + arguments
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-
-        let stdout = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        return CommandResult(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus)
+        try await executor.execute(executablePath: xcrunPath, arguments: ["simctl"] + arguments)
     }
 
     /// Execute an arbitrary command (not simctl).
     func runCommand(_ executablePath: String, arguments: [String]) async throws -> CommandResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executablePath)
-        process.arguments = arguments
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-
-        let stdout = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        return CommandResult(stdout: stdout, stderr: stderr, exitCode: process.terminationStatus)
+        try await executor.execute(executablePath: executablePath, arguments: arguments)
     }
 
     // MARK: - Device Listing & Discovery
@@ -69,16 +32,21 @@ actor SimctlClient {
     /// List all simulator devices, optionally filtering by state.
     func listDevices() async throws -> [SimDevice] {
         let result = try await run("list", "devices", "--json")
-        guard result.exitCode == 0 else {
+        guard result.succeeded else {
             throw SimctlError.commandFailed("simctl list devices", result.stderr)
         }
+        return try Self.parseDeviceList(result.stdout)
+    }
 
-        guard let data = result.stdout.data(using: .utf8) else {
-            throw SimctlError.parseError("Failed to parse device list")
+    /// Parse simctl device list JSON output into SimDevice array.
+    /// Static for testability — can be called without an actor instance.
+    static func parseDeviceList(_ json: String) throws -> [SimDevice] {
+        guard let data = json.data(using: .utf8) else {
+            throw SimctlError.parseError("Failed to decode JSON string")
         }
 
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let devicesByRuntime = json?["devices"] as? [String: [[String: Any]]] else {
+        let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let devicesByRuntime = parsed?["devices"] as? [String: [[String: Any]]] else {
             throw SimctlError.parseError("Unexpected device list format")
         }
 
@@ -119,28 +87,28 @@ actor SimctlClient {
 
     func bootDevice(_ udid: String) async throws {
         let result = try await run("boot", udid)
-        guard result.exitCode == 0 else {
+        guard result.succeeded else {
             throw SimctlError.commandFailed("boot", result.stderr)
         }
     }
 
     func shutdownDevice(_ udid: String) async throws {
         let result = try await run("shutdown", udid)
-        guard result.exitCode == 0 else {
+        guard result.succeeded else {
             throw SimctlError.commandFailed("shutdown", result.stderr)
         }
     }
 
     func eraseDevice(_ udid: String) async throws {
         let result = try await run("erase", udid)
-        guard result.exitCode == 0 else {
+        guard result.succeeded else {
             throw SimctlError.commandFailed("erase", result.stderr)
         }
     }
 
     func openSimulatorApp() async throws {
         let result = try await runCommand("/usr/bin/open", arguments: ["-a", "Simulator.app"])
-        guard result.exitCode == 0 else {
+        guard result.succeeded else {
             throw SimctlError.commandFailed("open Simulator.app", result.stderr)
         }
     }
@@ -149,7 +117,7 @@ actor SimctlClient {
 
     func installApp(udid: String, path: String) async throws {
         let result = try await run("install", udid, "--", path)
-        guard result.exitCode == 0 else {
+        guard result.succeeded else {
             throw SimctlError.commandFailed("install", result.stderr)
         }
     }
@@ -164,13 +132,18 @@ actor SimctlClient {
         args.append(bundleID)
 
         let result = try await run(args)
-        guard result.exitCode == 0 else {
+        guard result.succeeded else {
             throw SimctlError.commandFailed("launch", result.stderr)
         }
 
         // Extract PID from output like "com.example.app: 12345"
-        if let range = result.stdout.range(of: #": (\d+)"#, options: .regularExpression) {
-            let pidStr = result.stdout[range].dropFirst(2)
+        return Self.extractPID(from: result.stdout)
+    }
+
+    /// Extract PID from simctl launch output. Static for testability.
+    static func extractPID(from output: String) -> String? {
+        if let range = output.range(of: #": (\d+)"#, options: .regularExpression) {
+            let pidStr = output[range].dropFirst(2)
             return String(pidStr)
         }
         return nil
@@ -178,14 +151,14 @@ actor SimctlClient {
 
     func terminateApp(udid: String, bundleID: String) async throws {
         let result = try await run("terminate", udid, "--", bundleID)
-        guard result.exitCode == 0 else {
+        guard result.succeeded else {
             throw SimctlError.commandFailed("terminate", result.stderr)
         }
     }
 
     func getAppContainer(udid: String, bundleID: String, container: String = "app") async throws -> String {
         let result = try await run("get_app_container", udid, bundleID, container)
-        guard result.exitCode == 0 else {
+        guard result.succeeded else {
             throw SimctlError.commandFailed("get_app_container", result.stderr)
         }
         return result.stdout
@@ -208,26 +181,21 @@ actor SimctlClient {
         let result = try await run(args)
         // simctl screenshot outputs success message to stderr
         let combinedOutput = result.stdout + result.stderr
-        guard result.exitCode == 0 || combinedOutput.contains("Wrote screenshot to") else {
+        guard result.succeeded || combinedOutput.contains("Wrote screenshot to") else {
             throw SimctlError.commandFailed("screenshot", result.stderr)
         }
     }
 
     /// Start video recording. Returns the Process so it can be stopped later.
+    /// Note: This bypasses CommandExecuting since it needs a long-running Process handle.
     func startRecording(udid: String, outputPath: String, codec: String = "hevc", display: String? = nil, mask: String? = nil, force: Bool = false) async throws -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: xcrunPath)
         var args = ["simctl", "io", udid, "recordVideo"]
         args.append("--codec=\(codec)")
-        if let display = display {
-            args.append("--display=\(display)")
-        }
-        if let mask = mask {
-            args.append("--mask=\(mask)")
-        }
-        if force {
-            args.append("--force")
-        }
+        if let display = display { args.append("--display=\(display)") }
+        if let mask = mask { args.append("--mask=\(mask)") }
+        if force { args.append("--force") }
         args.append("--")
         args.append(outputPath)
         process.arguments = args
@@ -246,7 +214,7 @@ actor SimctlClient {
                 started = true
             }
             if !started {
-                try await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                try await Task.sleep(nanoseconds: 100_000_000)
             }
         }
 
@@ -256,9 +224,8 @@ actor SimctlClient {
     /// Stop video recording by sending SIGINT to simctl recordVideo processes.
     func stopRecording() async throws {
         let result = try await runCommand("/usr/bin/pkill", arguments: ["-SIGINT", "-f", "simctl.*recordVideo"])
-        // Give time for video finalization
-        try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-        if result.exitCode != 0 {
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        if !result.succeeded {
             throw SimctlError.commandFailed("stop recording", "No active recording found")
         }
     }
@@ -269,81 +236,63 @@ actor SimctlClient {
         var args = ["status_bar", udid, "override"]
         args.append(contentsOf: overrides)
         let result = try await run(args)
-        guard result.exitCode == 0 else {
+        guard result.succeeded else {
             throw SimctlError.commandFailed("status_bar", result.stderr)
         }
     }
 
     func clearStatusBar(udid: String) async throws {
         let result = try await run("status_bar", udid, "clear")
-        guard result.exitCode == 0 else {
-            throw SimctlError.commandFailed("status_bar clear", result.stderr)
-        }
+        guard result.succeeded else { throw SimctlError.commandFailed("status_bar clear", result.stderr) }
     }
 
     func setLocation(udid: String, latitude: Double, longitude: Double) async throws {
         let result = try await run("location", udid, "set", "\(latitude),\(longitude)")
-        guard result.exitCode == 0 else {
-            throw SimctlError.commandFailed("location", result.stderr)
-        }
+        guard result.succeeded else { throw SimctlError.commandFailed("location", result.stderr) }
     }
 
     func clearLocation(udid: String) async throws {
         let result = try await run("location", udid, "clear")
-        guard result.exitCode == 0 else {
-            throw SimctlError.commandFailed("location clear", result.stderr)
-        }
+        guard result.succeeded else { throw SimctlError.commandFailed("location clear", result.stderr) }
     }
 
     func setPrivacy(udid: String, action: String, service: String, bundleID: String) async throws {
         let result = try await run("privacy", udid, action, service, "--", bundleID)
-        guard result.exitCode == 0 else {
-            throw SimctlError.commandFailed("privacy", result.stderr)
-        }
+        guard result.succeeded else { throw SimctlError.commandFailed("privacy", result.stderr) }
     }
 
     func sendPushNotification(udid: String, bundleID: String, payloadPath: String) async throws {
         let result = try await run("push", udid, bundleID, "--", payloadPath)
-        guard result.exitCode == 0 else {
-            throw SimctlError.commandFailed("push", result.stderr)
-        }
+        guard result.succeeded else { throw SimctlError.commandFailed("push", result.stderr) }
     }
 
     func openURL(udid: String, url: String) async throws {
         let result = try await run("openurl", udid, "--", url)
-        guard result.exitCode == 0 else {
-            throw SimctlError.commandFailed("openurl", result.stderr)
-        }
+        guard result.succeeded else { throw SimctlError.commandFailed("openurl", result.stderr) }
     }
 
     func addMedia(udid: String, paths: [String]) async throws {
         var args = ["addmedia", udid, "--"]
         args.append(contentsOf: paths)
         let result = try await run(args)
-        guard result.exitCode == 0 else {
-            throw SimctlError.commandFailed("addmedia", result.stderr)
-        }
+        guard result.succeeded else { throw SimctlError.commandFailed("addmedia", result.stderr) }
     }
 
     func setAppearance(udid: String, appearance: String) async throws {
         let result = try await run("ui", udid, "appearance", appearance)
-        guard result.exitCode == 0 else {
-            throw SimctlError.commandFailed("ui appearance", result.stderr)
-        }
+        guard result.succeeded else { throw SimctlError.commandFailed("ui appearance", result.stderr) }
     }
 
     func getAppearance(udid: String) async throws -> String {
         let result = try await run("ui", udid, "appearance")
-        guard result.exitCode == 0 else {
-            throw SimctlError.commandFailed("ui appearance", result.stderr)
-        }
+        guard result.succeeded else { throw SimctlError.commandFailed("ui appearance", result.stderr) }
         return result.stdout
     }
 }
 
 // MARK: - Errors
 
-enum SimctlError: Error, CustomStringConvertible {
+enum SimctlError: Error, CustomStringConvertible, Equatable {
     case commandFailed(String, String)
     case noBootedDevice
     case parseError(String)

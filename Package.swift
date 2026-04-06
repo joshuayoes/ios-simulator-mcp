@@ -15,5 +15,15 @@ let package = Package(
                 .product(name: "MCP", package: "swift-sdk"),
             ]
         ),
+        .testTarget(
+            name: "SimulatorMCPTests",
+            dependencies: [
+                "SimulatorMCP",
+                .product(name: "MCP", package: "swift-sdk"),
+            ],
+            resources: [
+                .copy("Fixtures"),
+            ]
+        ),
     ]
 )

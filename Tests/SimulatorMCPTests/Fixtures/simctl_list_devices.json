@@ -1,0 +1,39 @@
+{
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-18-2": [
+      {
+        "lastBootedAt": "2025-01-15T10:30:00Z",
+        "dataPath": "/Users/dev/Library/Developer/CoreSimulator/Devices/ABC-123/data",
+        "dataPathSize": 1234567890,
+        "logPath": "/Users/dev/Library/Logs/CoreSimulator/ABC-123",
+        "udid": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE",
+        "isAvailable": true,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16",
+        "state": "Booted",
+        "name": "iPhone 16"
+      },
+      {
+        "dataPath": "/Users/dev/Library/Developer/CoreSimulator/Devices/DEF-456/data",
+        "dataPathSize": 0,
+        "logPath": "/Users/dev/Library/Logs/CoreSimulator/DEF-456",
+        "udid": "11111111-2222-3333-4444-555555555555",
+        "isAvailable": true,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+        "state": "Shutdown",
+        "name": "iPhone 16 Pro"
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-17-5": [
+      {
+        "dataPath": "/Users/dev/Library/Developer/CoreSimulator/Devices/GHI-789/data",
+        "dataPathSize": 0,
+        "logPath": "/Users/dev/Library/Logs/CoreSimulator/GHI-789",
+        "udid": "99999999-8888-7777-6666-555544443333",
+        "isAvailable": true,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Air-5th-generation",
+        "state": "Shutdown",
+        "name": "iPad Air (5th generation)"
+      }
+    ]
+  }
+}

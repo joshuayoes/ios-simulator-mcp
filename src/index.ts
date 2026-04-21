@@ -464,8 +464,8 @@ if (!isToolFiltered("ui_paste")) {
             const findPaste = (nodes: typeof elements): boolean => {
               for (const node of nodes) {
                 if (node.AXLabel === "Paste" && node.frame) {
-                  pasteX = node.frame.x + node.frame.width / 2;
-                  pasteY = node.frame.y + node.frame.height / 2;
+                  pasteX = Math.round(node.frame.x + node.frame.width / 2);
+                  pasteY = Math.round(node.frame.y + node.frame.height / 2);
                   return true;
                 }
                 if (node.children) {

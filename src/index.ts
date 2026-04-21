@@ -389,6 +389,138 @@ if (!isToolFiltered("ui_type")) {
   );
 }
 
+if (!isToolFiltered("ui_paste")) {
+  server.tool(
+    "ui_paste",
+    "Paste text (including emoji and Unicode) into the focused input field in the iOS Simulator. Use this instead of ui_type when the text contains emoji or non-ASCII characters.",
+    {
+      text: z
+        .string()
+        .max(500)
+        .describe("Text to paste, supports emoji and Unicode (e.g. '😭🚩 he ghosted me')"),
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      x: z
+        .number()
+        .optional()
+        .describe("X coordinate to long-press to trigger the paste menu (defaults to last tapped position)"),
+      y: z
+        .number()
+        .optional()
+        .describe("Y coordinate to long-press to trigger the paste menu (defaults to last tapped position)"),
+    },
+    { title: "UI Paste", readOnlyHint: false, openWorldHint: true },
+    async ({ text, udid, x, y }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        // Write text to Mac clipboard then sync to simulator pasteboard
+        await run("bash", [
+          "-c",
+          `printf '%s' ${JSON.stringify(text)} | pbcopy`,
+        ]);
+        await run("xcrun", ["simctl", "pbsync", "host", actualUdid]);
+
+        // Long-press at given coordinates to trigger paste menu (if provided)
+        if (x !== undefined && y !== undefined) {
+          await idb(
+            "ui",
+            "tap",
+            "--udid",
+            actualUdid,
+            "--duration",
+            "0.8",
+            "--",
+            String(x),
+            String(y)
+          );
+
+          // Small delay for the paste menu to appear
+          await new Promise((resolve) => setTimeout(resolve, 600));
+
+          // Describe UI to find the Paste button
+          const { stdout } = await idb(
+            "ui",
+            "describe-all",
+            "--udid",
+            actualUdid,
+            "--json",
+            "--nested"
+          );
+
+          let pasteX: number | undefined;
+          let pasteY: number | undefined;
+
+          try {
+            const elements = JSON.parse(stdout) as Array<{
+              AXLabel?: string;
+              frame?: { x: number; y: number; width: number; height: number };
+              children?: unknown[];
+            }>;
+
+            const findPaste = (nodes: typeof elements): boolean => {
+              for (const node of nodes) {
+                if (node.AXLabel === "Paste" && node.frame) {
+                  pasteX = Math.round(node.frame.x + node.frame.width / 2);
+                  pasteY = Math.round(node.frame.y + node.frame.height / 2);
+                  return true;
+                }
+                if (node.children) {
+                  if (findPaste(node.children as typeof elements)) return true;
+                }
+              }
+              return false;
+            };
+
+            findPaste(elements);
+          } catch {
+            // ignore parse errors — fall through to success
+          }
+
+          if (pasteX !== undefined && pasteY !== undefined) {
+            await idb(
+              "ui",
+              "tap",
+              "--udid",
+              actualUdid,
+              "--",
+              String(pasteX),
+              String(pasteY)
+            );
+          }
+        }
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: x !== undefined && y !== undefined
+                ? "Text pasted successfully"
+                : "Text copied to simulator clipboard. Long-press a text field and tap Paste to insert it.",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error pasting text: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
 if (!isToolFiltered("ui_swipe")) {
   server.tool(
     "ui_swipe",
@@ -541,17 +673,28 @@ if (!isToolFiltered("ui_view")) {
           "--nested"
         );
 
-        const uiData = JSON.parse(uiDescribeOutput);
-        const screenFrame = uiData[0]?.frame;
-        if (!screenFrame) {
-          throw new Error("Could not determine screen dimensions");
+        let uiData: unknown;
+        try {
+          uiData = JSON.parse(uiDescribeOutput);
+        } catch {
+          throw new Error("Failed to parse screen dimensions: idb returned invalid JSON");
+        }
+        const screenFrame = (uiData as Array<{ frame?: { width: unknown; height: unknown } }>)[0]?.frame;
+        if (
+          !screenFrame ||
+          typeof screenFrame.width !== "number" ||
+          typeof screenFrame.height !== "number" ||
+          screenFrame.width <= 0 ||
+          screenFrame.height <= 0
+        ) {
+          throw new Error("Could not determine valid screen dimensions from idb output");
         }
 
         const pointWidth = screenFrame.width;
         const pointHeight = screenFrame.height;
 
-        // Generate unique file names with timestamp
-        const ts = Date.now();
+        // Generate unique file names with timestamp + random suffix to avoid collisions
+        const ts = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const rawPng = path.join(TMP_ROOT_DIR, `ui-view-${ts}-raw.png`);
         const compressedJpg = path.join(
           TMP_ROOT_DIR,
@@ -585,9 +728,15 @@ if (!isToolFiltered("ui_view")) {
           compressedJpg,
         ]);
 
-        // Read and encode the compressed image
+        // Read and encode the compressed image, then clean up temp files immediately
         const imageData = fs.readFileSync(compressedJpg);
         const base64Data = imageData.toString("base64");
+        try {
+          fs.unlinkSync(rawPng);
+          fs.unlinkSync(compressedJpg);
+        } catch {
+          // ignore cleanup errors — they'll be removed on server exit
+        }
 
         return {
           isError: false,
@@ -740,6 +889,11 @@ if (!isToolFiltered("record_video")) {
     "record_video",
     "Records a video of the iOS Simulator using simctl directly",
     {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
       output_path: z
         .string()
         .max(1024)
@@ -773,8 +927,9 @@ if (!isToolFiltered("record_video")) {
         ),
     },
     { title: "Record Video", readOnlyHint: false, openWorldHint: true },
-    async ({ output_path, codec, display, mask, force }) => {
+    async ({ udid, output_path, codec, display, mask, force }) => {
       try {
+        const actualUdid = await getBootedDeviceId(udid);
         const defaultFileName = `simulator_recording_${Date.now()}.mp4`;
         const outputFile = ensureAbsolutePath(output_path ?? defaultFileName);
 
@@ -782,7 +937,7 @@ if (!isToolFiltered("record_video")) {
         const recordingProcess = spawn("xcrun", [
           "simctl",
           "io",
-          "booted",
+          actualUdid,
           "recordVideo",
           ...(codec ? [`--codec=${codec}`] : []),
           ...(display ? [`--display=${display}`] : []),
@@ -795,27 +950,39 @@ if (!isToolFiltered("record_video")) {
           outputFile,
         ]);
 
-        // Wait for recording to start
+        // Wait for recording to start or fail within 5 seconds
         await new Promise((resolve, reject) => {
           let errorOutput = "";
+          let resolved = false;
 
           recordingProcess.stderr.on("data", (data) => {
             const message = data.toString();
             if (message.includes("Recording started")) {
+              resolved = true;
               resolve(true);
             } else {
               errorOutput += message;
             }
           });
 
-          // Set timeout for start verification
-          setTimeout(() => {
-            if (recordingProcess.killed) {
-              reject(new Error("Recording process terminated unexpectedly"));
-            } else {
-              resolve(true);
+          recordingProcess.on("exit", (code) => {
+            if (!resolved) {
+              reject(new Error(
+                errorOutput.trim() || `Recording process exited early with code ${code}`
+              ));
             }
-          }, 3000);
+          });
+
+          setTimeout(() => {
+            if (!resolved) {
+              if (recordingProcess.killed || recordingProcess.exitCode !== null) {
+                reject(new Error(errorOutput.trim() || "Recording process terminated unexpectedly"));
+              } else {
+                // Process still running but no "Recording started" message — assume it started
+                resolve(true);
+              }
+            }
+          }, 5000);
         });
 
         return {

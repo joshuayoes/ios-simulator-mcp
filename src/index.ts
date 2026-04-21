@@ -389,6 +389,138 @@ if (!isToolFiltered("ui_type")) {
   );
 }
 
+if (!isToolFiltered("ui_paste")) {
+  server.tool(
+    "ui_paste",
+    "Paste text (including emoji and Unicode) into the focused input field in the iOS Simulator. Use this instead of ui_type when the text contains emoji or non-ASCII characters.",
+    {
+      text: z
+        .string()
+        .max(500)
+        .describe("Text to paste, supports emoji and Unicode (e.g. '😭🚩 he ghosted me')"),
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      x: z
+        .number()
+        .optional()
+        .describe("X coordinate to long-press to trigger the paste menu (defaults to last tapped position)"),
+      y: z
+        .number()
+        .optional()
+        .describe("Y coordinate to long-press to trigger the paste menu (defaults to last tapped position)"),
+    },
+    { title: "UI Paste", readOnlyHint: false, openWorldHint: true },
+    async ({ text, udid, x, y }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        // Write text to Mac clipboard then sync to simulator pasteboard
+        await run("bash", [
+          "-c",
+          `printf '%s' ${JSON.stringify(text)} | pbcopy`,
+        ]);
+        await run("xcrun", ["simctl", "pbsync", "host", actualUdid]);
+
+        // Long-press at given coordinates to trigger paste menu (if provided)
+        if (x !== undefined && y !== undefined) {
+          await idb(
+            "ui",
+            "tap",
+            "--udid",
+            actualUdid,
+            "--duration",
+            "1.5",
+            "--",
+            String(x),
+            String(y)
+          );
+
+          // Small delay for the paste menu to appear
+          await new Promise((resolve) => setTimeout(resolve, 600));
+
+          // Describe UI to find the Paste button
+          const { stdout } = await idb(
+            "ui",
+            "describe-all",
+            "--udid",
+            actualUdid,
+            "--json",
+            "--nested"
+          );
+
+          let pasteX: number | undefined;
+          let pasteY: number | undefined;
+
+          try {
+            const elements = JSON.parse(stdout) as Array<{
+              AXLabel?: string;
+              frame?: { x: number; y: number; width: number; height: number };
+              children?: unknown[];
+            }>;
+
+            const findPaste = (nodes: typeof elements): boolean => {
+              for (const node of nodes) {
+                if (node.AXLabel === "Paste" && node.frame) {
+                  pasteX = node.frame.x + node.frame.width / 2;
+                  pasteY = node.frame.y + node.frame.height / 2;
+                  return true;
+                }
+                if (node.children) {
+                  if (findPaste(node.children as typeof elements)) return true;
+                }
+              }
+              return false;
+            };
+
+            findPaste(elements);
+          } catch {
+            // ignore parse errors — fall through to success
+          }
+
+          if (pasteX !== undefined && pasteY !== undefined) {
+            await idb(
+              "ui",
+              "tap",
+              "--udid",
+              actualUdid,
+              "--",
+              String(pasteX),
+              String(pasteY)
+            );
+          }
+        }
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: x !== undefined && y !== undefined
+                ? "Text pasted successfully"
+                : "Text copied to simulator clipboard. Long-press a text field and tap Paste to insert it.",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error pasting text: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
 if (!isToolFiltered("ui_swipe")) {
   server.tool(
     "ui_swipe",

@@ -1431,6 +1431,75 @@ if (!isToolFiltered("list_apps")) {
   );
 }
 
+if (!isToolFiltered("rotate_device")) {
+  server.tool(
+    "rotate_device",
+    "Rotates the iOS Simulator left (counter-clockwise) or right (clockwise)",
+    {
+      direction: z
+        .enum(["left", "right"])
+        .describe(
+          'Direction to rotate: "left" rotates counter-clockwise, "right" rotates clockwise'
+        ),
+      times: z
+        .number()
+        .int()
+        .min(1)
+        .max(3)
+        .optional()
+        .describe(
+          "Number of 90° increments to rotate. Defaults to 1. Use 2 for 180°, 3 for 270°."
+        ),
+    },
+    { title: "Rotate Device", readOnlyHint: false, openWorldHint: true },
+    async ({ direction, times = 1 }) => {
+      try {
+        // Simulator rotates via Device menu keyboard shortcuts:
+        //   Command+Left  → rotate left (counter-clockwise)
+        //   Command+Right → rotate right (clockwise)
+        // key code 123 = left arrow, 124 = right arrow
+        const keyCode = direction === "left" ? "123" : "124";
+
+        for (let i = 0; i < times; i++) {
+          await run("osascript", [
+            "-e",
+            'tell application "Simulator" to activate',
+            "-e",
+            `tell application "System Events" to key code ${keyCode} using command down`,
+          ]);
+          // Small delay between rotations so the simulator can animate
+          if (i < times - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+        }
+
+        const degrees = times * 90;
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `Device rotated ${direction} by ${degrees}°.`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error rotating device: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
 async function runServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);

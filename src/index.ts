@@ -958,9 +958,18 @@ if (!isToolFiltered("record_video")) {
         .describe(
           "Force the output file to be written to, even if the file already exists."
         ),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .max(3600)
+        .optional()
+        .describe(
+          "Automatically stop recording after this many seconds (1–3600). If omitted, recording continues until stop_recording is called."
+        ),
     },
     { title: "Record Video", readOnlyHint: false, openWorldHint: true },
-    async ({ udid, output_path, codec, display, mask, force }) => {
+    async ({ udid, output_path, codec, display, mask, force, timeout }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
         const defaultFileName = `simulator_recording_${Date.now()}.mp4`;
@@ -1021,12 +1030,25 @@ if (!isToolFiltered("record_video")) {
         activeRecordings.set(actualUdid, recordingProcess);
         recordingProcess.on("exit", () => activeRecordings.delete(actualUdid));
 
+        if (timeout) {
+          setTimeout(() => {
+            const proc = activeRecordings.get(actualUdid);
+            if (proc && proc.pid) {
+              proc.kill("SIGINT");
+            }
+          }, timeout * 1000);
+        }
+
+        const stopNote = timeout
+          ? `Recording will automatically stop after ${timeout} second${timeout === 1 ? "" : "s"}.`
+          : "To stop recording, use the stop_recording command.";
+
         return {
           isError: false,
           content: [
             {
               type: "text",
-              text: `Recording started. The video will be saved to: ${outputFile}\nTo stop recording, use the stop_recording command.`,
+              text: `Recording started. The video will be saved to: ${outputFile}\n${stopNote}`,
             },
           ],
         };

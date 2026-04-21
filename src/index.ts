@@ -86,6 +86,9 @@ function isToolFiltered(toolName: string): boolean {
   return FILTERED_TOOLS.includes(toolName);
 }
 
+// Tracks active recording processes by UDID so stop_recording can kill precisely
+const activeRecordings = new Map<string, import("child_process").ChildProcess>();
+
 const server = new McpServer({
   name: "ios-simulator",
   version: require("../package.json").version,
@@ -1015,6 +1018,9 @@ if (!isToolFiltered("record_video")) {
           }, 5000);
         });
 
+        activeRecordings.set(actualUdid, recordingProcess);
+        recordingProcess.on("exit", () => activeRecordings.delete(actualUdid));
+
         return {
           isError: false,
           content: [
@@ -1044,14 +1050,30 @@ if (!isToolFiltered("record_video")) {
 if (!isToolFiltered("stop_recording")) {
   server.tool(
     "stop_recording",
-    "Stops the simulator video recording using killall",
-    {},
+    "Stops the simulator video recording",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe(
+          "Udid of the simulator whose recording should be stopped. Can also be set with the IDB_UDID env var. If omitted, stops the recording for the booted simulator."
+        ),
+    },
     { title: "Stop Recording", readOnlyHint: false, openWorldHint: true },
-    async () => {
+    async ({ udid }) => {
       try {
-        await run("pkill", ["-SIGINT", "-f", "simctl.*recordVideo"]);
+        const actualUdid = await getBootedDeviceId(udid);
+        const proc = activeRecordings.get(actualUdid);
 
-        // Wait a moment for the video to finalize
+        if (proc && proc.pid) {
+          proc.kill("SIGINT");
+        } else {
+          // Fallback: no tracked process — use pkill as a safety net
+          await run("pkill", ["-SIGINT", "-f", "simctl.*recordVideo"]).catch(() => {});
+        }
+
+        // Wait for the video file to be finalised
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         return {

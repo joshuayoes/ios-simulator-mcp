@@ -247,80 +247,180 @@ This project has been featured and mentioned in various publications and resourc
 }
 ```
 
-## 💡 Use Case: QA Step via MCP Tool Calls
+### `terminate_app`
 
-This MCP server allows AI assistants integrated with a Model Context Protocol (MCP) client to perform Quality Assurance tasks by making tool calls. This is useful immediately after implementing features to help ensure UI consistency and correct behavior.
+**Description:** Terminates a running app on the iOS Simulator by bundle identifier
 
-### How to Use
+**Parameters:**
 
-After a feature implementation, instruct your AI assistant within its MCP client environment to use the available tools. For example, in Cursor's agent mode, you could use the prompts below to quickly validate and document UI interactions.
+```typescript
+{
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
+  /** Bundle identifier of the app to terminate (e.g., com.apple.mobilesafari) */
+  bundle_id: string;
+}
+```
 
-### Example Prompts
+### `open_url`
 
-- **Verify UI Elements:**
+**Description:** Opens a URL on the iOS Simulator (supports deep links and universal links)
 
-  ```
-  Verify all accessibility elements on the current screen
-  ```
+**Parameters:**
 
-- **Confirm Text Input:**
+```typescript
+{
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
+  /** The URL to open (e.g., https://example.com or myapp://deeplink) */
+  url: string;
+}
+```
 
-  ```
-  Enter "QA Test" into the text input field and confirm the input is correct
-  ```
+### `list_apps`
 
-- **Check Tap Response:**
+**Description:** Lists all installed apps on the iOS Simulator
 
-  ```
-  Tap on coordinates x=250, y=400 and verify the expected element is triggered
-  ```
+**Parameters:**
 
-- **Validate Swipe Action:**
+```typescript
+{
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
+}
+```
 
-  ```
-  Swipe from x=150, y=600 to x=150, y=100 and confirm correct behavior
-  ```
+### `ui_paste`
 
-- **Detailed Element Check:**
+**Description:** Pastes text into the focused text field using clipboard injection. Supports emoji, Unicode, CJK characters, and any text that cannot be typed via keyboard simulation.
 
-  ```
-  Describe the UI element at position x=300, y=350 to ensure proper labeling and functionality
-  ```
+**Parameters:**
 
-- **Show Your AI Agent the Simulator Screen:**
+```typescript
+{
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
+  /** Text to paste (supports emoji, Unicode, and all character sets) */
+  text: string;
+}
+```
 
-  ```
-  View the current simulator screen
-  ```
+### `rotate_device`
 
-- **Take Screenshot:**
+**Description:** Rotates the iOS Simulator left (counter-clockwise) or right (clockwise)
 
-  ```
-  Take a screenshot of the current simulator screen and save it to my_screenshot.png
-  ```
+**Parameters:**
 
-- **Record Video:**
+```typescript
+{
+  /** Direction to rotate: "left" is counter-clockwise, "right" is clockwise */
+  direction: "left" | "right";
+  /** Number of 90° increments to rotate (1–3). Defaults to 1. */
+  times?: number;
+}
+```
 
-  ```
-  Start recording a video of the simulator screen (saves to the default output directory, which is `~/Downloads` unless overridden by `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR`)
-  ```
+## 💡 Use Cases
 
-- **Stop Recording:**
+This MCP server lets your AI assistant see, interact with, and validate your iOS app directly in the simulator — no manual clicking required. Below are real workflows you can hand off to your AI agent.
 
-  ```
-  Stop the current simulator screen recording
-  ```
+---
 
-- **Install App:**
+### 🎥 Record a Bug Reproduction
 
-  ```
-  Install the app at path/to/MyApp.app on the simulator
-  ```
+When filing a bug report or reviewing a PR, have your agent reproduce the steps on video:
 
-- **Launch App:**
-  ```
-  Launch the Safari app (com.apple.mobilesafari) on the simulator
-  ```
+```
+Start recording the simulator screen, then follow the reproduction steps from this PR description:
+1. Open the Settings tab
+2. Toggle "Enable notifications" off and back on
+3. Background the app and reopen it
+4. Confirm the toggle state persisted
+
+Stop the recording when done and save it to ~/Desktop/bug-repro.mp4
+```
+
+The agent will start recording, navigate through each step using `ui_tap` and `ui_describe_all`, stop the recording, and hand you a ready-to-attach video.
+
+---
+
+### ✅ Validate a Feature After Implementation
+
+After your static checks pass, have your agent navigate to the new feature and sanity-check it visually:
+
+```
+I just implemented the new onboarding flow. After the build finishes,
+open the app, navigate to the onboarding screen, go through each step,
+and take a screenshot of the final state. Tell me if anything looks off.
+```
+
+The agent will install the fresh build, walk through the UI, and report back with a screenshot — catching layout issues and broken navigation before you even switch windows.
+
+---
+
+### 🐛 Fix a React Native Redbox Error
+
+When a Redbox pops up mid-development, point your agent at it:
+
+```
+Look at the current simulator screen. There's a React Native error — read it,
+find the root cause in the source code, apply a fix, rebuild, then view the
+simulator again to confirm the error is gone.
+```
+
+The agent reads the error via `ui_view`, traces it to the source, fixes it, triggers a rebuild, and verifies the screen is clean — all without you leaving your editor.
+
+---
+
+### 🌐 Test Unicode and Emoji Input
+
+Standard keyboard injection can't handle emoji or non-ASCII characters. This server uses clipboard injection so your agent can type anything:
+
+```
+Open the chat composer, type "Hello 🌍! こんにちは", and take a screenshot
+to confirm the text rendered correctly.
+```
+
+Works with emoji, CJK characters, Arabic, RTL text — anything on the clipboard.
+
+---
+
+### 📱 Test Landscape and Portrait Layouts
+
+Have your agent check your layout in both orientations:
+
+```
+Rotate the simulator to landscape, take a screenshot, then rotate back to portrait
+and take another. Compare both and flag any elements that are clipped or overlapping.
+```
+
+---
+
+### 🔁 Full QA Session
+
+Chain the tools together for a complete smoke test after a build:
+
+```
+Install the latest build from DerivedData, launch the app, and run through
+the critical path:
+1. Log in with test@example.com / password123
+2. Navigate to the Profile tab
+3. Edit the display name to "QA Bot 🤖"
+4. Save and confirm the name updated on screen
+5. Take a final screenshot and save it to ~/Desktop/qa-pass.png
+```
 
 ## Prerequisites
 

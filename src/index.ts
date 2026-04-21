@@ -1500,6 +1500,244 @@ if (!isToolFiltered("rotate_device")) {
   );
 }
 
+if (!isToolFiltered("push_notification")) {
+  server.tool(
+    "push_notification",
+    "Send a simulated push notification to an app on the iOS Simulator",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      bundle_id: z
+        .string()
+        .max(256)
+        .describe(
+          "Bundle identifier of the target app (e.g., co.getsnippet.tea)"
+        ),
+      title: z
+        .string()
+        .max(256)
+        .optional()
+        .describe("Notification title"),
+      body: z
+        .string()
+        .max(1024)
+        .describe("Notification body text"),
+      badge: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Badge count to display on the app icon"),
+      user_info: z
+        .record(z.unknown())
+        .optional()
+        .describe(
+          "Optional custom data payload to include under the 'data' key (e.g., for deep link routing)"
+        ),
+    },
+    { title: "Push Notification", readOnlyHint: false, openWorldHint: true },
+    async ({ udid, bundle_id, title, body, badge, user_info }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        const aps: Record<string, unknown> = {
+          alert: title ? { title, body } : body,
+          sound: "default",
+        };
+        if (badge !== undefined) aps.badge = badge;
+
+        const payload: Record<string, unknown> = { aps };
+        if (user_info) payload.data = user_info;
+
+        const payloadJson = JSON.stringify(payload);
+        if (Buffer.byteLength(payloadJson, "utf8") > 4096) {
+          throw new Error("Notification payload exceeds the 4096-byte limit");
+        }
+
+        // Write to a temp file — simctl push requires a file path or stdin
+        const tmpFile = path.join(TMP_ROOT_DIR, `push_${Date.now()}.json`);
+        fs.writeFileSync(tmpFile, payloadJson, "utf8");
+
+        try {
+          await run("xcrun", [
+            "simctl",
+            "push",
+            actualUdid,
+            bundle_id,
+            tmpFile,
+          ]);
+        } finally {
+          fs.rmSync(tmpFile, { force: true });
+        }
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `Push notification sent to ${bundle_id}.`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error sending push notification: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("set_permission")) {
+  server.tool(
+    "set_permission",
+    "Grant, revoke, or reset an app permission on the iOS Simulator",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      bundle_id: z
+        .string()
+        .max(256)
+        .optional()
+        .describe(
+          "Bundle identifier of the target app. Required for grant and revoke. Optional for reset."
+        ),
+      action: z
+        .enum(["grant", "revoke", "reset"])
+        .describe(
+          '"grant" gives access without prompting, "revoke" denies access, "reset" clears the decision so the app prompts again on next use'
+        ),
+      service: z
+        .enum([
+          "all",
+          "calendar",
+          "contacts-limited",
+          "contacts",
+          "location",
+          "location-always",
+          "photos-add",
+          "photos",
+          "media-library",
+          "microphone",
+          "motion",
+          "reminders",
+          "siri",
+        ])
+        .describe("The permission service to modify"),
+    },
+    { title: "Set Permission", readOnlyHint: false, openWorldHint: true },
+    async ({ udid, bundle_id, action, service }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        if ((action === "grant" || action === "revoke") && !bundle_id) {
+          throw new Error(
+            `bundle_id is required when action is "${action}"`
+          );
+        }
+
+        const args = [
+          "simctl",
+          "privacy",
+          actualUdid,
+          action,
+          service,
+          ...(bundle_id ? [bundle_id] : []),
+        ];
+
+        await run("xcrun", args);
+
+        const description = bundle_id
+          ? `${action}ed ${service} permission for ${bundle_id}`
+          : `${action} all ${service} permissions`;
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `Permission updated: ${description}.`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error setting permission: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("get_clipboard")) {
+  server.tool(
+    "get_clipboard",
+    "Read the current contents of the iOS Simulator clipboard",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+    },
+    { title: "Get Clipboard", readOnlyHint: true, openWorldHint: true },
+    async ({ udid }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+        const { stdout } = await run("xcrun", [
+          "simctl",
+          "pbpaste",
+          actualUdid,
+        ]);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: stdout || "(clipboard is empty)",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error reading clipboard: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
 async function runServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);

@@ -830,12 +830,33 @@ if (!isToolFiltered("screenshot")) {
         .describe(
           "For non-rectangular displays, handle the mask by policy (ignored, alpha, or black)"
         ),
+      max_size: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          "Maximum dimension in pixels (width or height). If the screenshot exceeds this, it will be resized proportionally using sips. Useful to stay within Claude's 2000px API limit."
+        ),
+      force: z
+        .boolean()
+        .optional()
+        .describe(
+          "Overwrite the output file if it already exists. Defaults to false."
+        ),
     },
     { title: "Take Screenshot", readOnlyHint: false, openWorldHint: true },
-    async ({ udid, output_path, type, display, mask }) => {
+    async ({ udid, output_path, type, display, mask, max_size, force }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
         const absolutePath = ensureAbsolutePath(output_path);
+
+        // Prevent silent overwrite unless force is explicitly set
+        if (!force && fs.existsSync(absolutePath)) {
+          throw new Error(
+            `File already exists at: ${absolutePath}. Pass force: true to overwrite it.`
+          );
+        }
 
         // command is weird, it responds with stderr on success and stdout is blank
         const { stderr: stdout } = await run("xcrun", [
@@ -856,6 +877,15 @@ if (!isToolFiltered("screenshot")) {
         // throw if we don't get the expected success message
         if (stdout && !stdout.includes("Wrote screenshot to")) {
           throw new Error(stdout);
+        }
+
+        // Resize if max_size is specified and the image exceeds it
+        if (max_size) {
+          await run("sips", [
+            "--resampleHeightWidthMax",
+            String(max_size),
+            absolutePath,
+          ]);
         }
 
         return {

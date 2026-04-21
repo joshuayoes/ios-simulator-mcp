@@ -541,17 +541,28 @@ if (!isToolFiltered("ui_view")) {
           "--nested"
         );
 
-        const uiData = JSON.parse(uiDescribeOutput);
-        const screenFrame = uiData[0]?.frame;
-        if (!screenFrame) {
-          throw new Error("Could not determine screen dimensions");
+        let uiData: unknown;
+        try {
+          uiData = JSON.parse(uiDescribeOutput);
+        } catch {
+          throw new Error("Failed to parse screen dimensions: idb returned invalid JSON");
+        }
+        const screenFrame = (uiData as Array<{ frame?: { width: unknown; height: unknown } }>)[0]?.frame;
+        if (
+          !screenFrame ||
+          typeof screenFrame.width !== "number" ||
+          typeof screenFrame.height !== "number" ||
+          screenFrame.width <= 0 ||
+          screenFrame.height <= 0
+        ) {
+          throw new Error("Could not determine valid screen dimensions from idb output");
         }
 
         const pointWidth = screenFrame.width;
         const pointHeight = screenFrame.height;
 
-        // Generate unique file names with timestamp
-        const ts = Date.now();
+        // Generate unique file names with timestamp + random suffix to avoid collisions
+        const ts = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const rawPng = path.join(TMP_ROOT_DIR, `ui-view-${ts}-raw.png`);
         const compressedJpg = path.join(
           TMP_ROOT_DIR,
@@ -585,9 +596,15 @@ if (!isToolFiltered("ui_view")) {
           compressedJpg,
         ]);
 
-        // Read and encode the compressed image
+        // Read and encode the compressed image, then clean up temp files immediately
         const imageData = fs.readFileSync(compressedJpg);
         const base64Data = imageData.toString("base64");
+        try {
+          fs.unlinkSync(rawPng);
+          fs.unlinkSync(compressedJpg);
+        } catch {
+          // ignore cleanup errors — they'll be removed on server exit
+        }
 
         return {
           isError: false,
@@ -740,6 +757,11 @@ if (!isToolFiltered("record_video")) {
     "record_video",
     "Records a video of the iOS Simulator using simctl directly",
     {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
       output_path: z
         .string()
         .max(1024)
@@ -773,8 +795,9 @@ if (!isToolFiltered("record_video")) {
         ),
     },
     { title: "Record Video", readOnlyHint: false, openWorldHint: true },
-    async ({ output_path, codec, display, mask, force }) => {
+    async ({ udid, output_path, codec, display, mask, force }) => {
       try {
+        const actualUdid = await getBootedDeviceId(udid);
         const defaultFileName = `simulator_recording_${Date.now()}.mp4`;
         const outputFile = ensureAbsolutePath(output_path ?? defaultFileName);
 
@@ -782,7 +805,7 @@ if (!isToolFiltered("record_video")) {
         const recordingProcess = spawn("xcrun", [
           "simctl",
           "io",
-          "booted",
+          actualUdid,
           "recordVideo",
           ...(codec ? [`--codec=${codec}`] : []),
           ...(display ? [`--display=${display}`] : []),
@@ -795,27 +818,39 @@ if (!isToolFiltered("record_video")) {
           outputFile,
         ]);
 
-        // Wait for recording to start
+        // Wait for recording to start or fail within 5 seconds
         await new Promise((resolve, reject) => {
           let errorOutput = "";
+          let resolved = false;
 
           recordingProcess.stderr.on("data", (data) => {
             const message = data.toString();
             if (message.includes("Recording started")) {
+              resolved = true;
               resolve(true);
             } else {
               errorOutput += message;
             }
           });
 
-          // Set timeout for start verification
-          setTimeout(() => {
-            if (recordingProcess.killed) {
-              reject(new Error("Recording process terminated unexpectedly"));
-            } else {
-              resolve(true);
+          recordingProcess.on("exit", (code) => {
+            if (!resolved) {
+              reject(new Error(
+                errorOutput.trim() || `Recording process exited early with code ${code}`
+              ));
             }
-          }, 3000);
+          });
+
+          setTimeout(() => {
+            if (!resolved) {
+              if (recordingProcess.killed || recordingProcess.exitCode !== null) {
+                reject(new Error(errorOutput.trim() || "Recording process terminated unexpectedly"));
+              } else {
+                // Process still running but no "Recording started" message — assume it started
+                resolve(true);
+              }
+            }
+          }, 5000);
         });
 
         return {

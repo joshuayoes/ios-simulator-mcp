@@ -334,7 +334,7 @@ if (!isToolFiltered("ui_tap")) {
 if (!isToolFiltered("ui_type")) {
   server.tool(
     "ui_type",
-    "Input text into the iOS Simulator",
+    "Input text into the iOS Simulator. Works correctly on all keyboard layouts including AZERTY, QWERTZ, and other non-US layouts.",
     {
       udid: z
         .string()
@@ -344,27 +344,105 @@ if (!isToolFiltered("ui_type")) {
       text: z
         .string()
         .max(500)
-        .regex(/^[\x20-\x7E]+$/)
-        .describe("Text to input"),
+        .describe("Text to input, supports all keyboard layouts and Unicode"),
     },
     { title: "UI Type", readOnlyHint: false, openWorldHint: true },
     async ({ udid, text }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        const { stderr } = await idb(
+        // Use clipboard injection instead of idb ui text to avoid keyboard
+        // layout issues. idb ui text sends raw QWERTY keycodes which produce
+        // wrong characters on AZERTY, QWERTZ, and other non-US keyboard layouts.
+        // Clipboard injection is layout-independent.
+        await run("bash", ["-c", `printf '%s' ${JSON.stringify(text)} | pbcopy`]);
+        await run("xcrun", ["simctl", "pbsync", "host", actualUdid]);
+
+        // Find a focused or editable text field in the accessibility tree
+        // to long-press and trigger the paste menu automatically
+        const { stdout } = await idb(
           "ui",
-          "text",
+          "describe-all",
           "--udid",
           actualUdid,
-          // When passing user-provided values to a command, it's crucial to use `--`
-          // to separate the command's options from positional arguments.
-          // This prevents the shell from misinterpreting the arguments as options.
-          "--",
-          text
+          "--json",
+          "--nested"
         );
 
-        if (stderr) throw new Error(stderr);
+        type AXNode = {
+          role?: string;
+          type?: string;
+          enabled?: boolean;
+          frame?: { x: number; y: number; width: number; height: number };
+          children?: AXNode[];
+        };
+
+        let fieldX: number | undefined;
+        let fieldY: number | undefined;
+
+        try {
+          const elements = JSON.parse(stdout) as AXNode[];
+          const findTextField = (nodes: AXNode[]): boolean => {
+            for (const node of nodes) {
+              if (
+                (node.role === "AXTextField" || node.role === "AXTextArea") &&
+                node.enabled &&
+                node.frame &&
+                node.frame.width > 0 &&
+                node.frame.height > 0
+              ) {
+                fieldX = Math.round(node.frame.x + node.frame.width / 2);
+                fieldY = Math.round(node.frame.y + node.frame.height / 2);
+                return true;
+              }
+              if (node.children && findTextField(node.children)) return true;
+            }
+            return false;
+          };
+          findTextField(elements);
+        } catch {
+          // ignore parse errors
+        }
+
+        if (fieldX === undefined || fieldY === undefined) {
+          throw new Error(
+            "No focused text field found on screen. Tap a text field first, then call ui_type."
+          );
+        }
+
+        // Long-press to show paste menu
+        await idb("ui", "tap", "--udid", actualUdid, "--duration", "0.8", "--", String(fieldX), String(fieldY));
+        await new Promise((resolve) => setTimeout(resolve, 600));
+
+        // Find and tap the Paste button
+        const { stdout: afterLongPress } = await idb("ui", "describe-all", "--udid", actualUdid, "--json", "--nested");
+
+        let pasteX: number | undefined;
+        let pasteY: number | undefined;
+
+        try {
+          const elements = JSON.parse(afterLongPress) as Array<{ AXLabel?: string; frame?: { x: number; y: number; width: number; height: number }; children?: unknown[] }>;
+          const findPaste = (nodes: typeof elements): boolean => {
+            for (const node of nodes) {
+              if (node.AXLabel === "Paste" && node.frame) {
+                pasteX = Math.round(node.frame.x + node.frame.width / 2);
+                pasteY = Math.round(node.frame.y + node.frame.height / 2);
+                return true;
+              }
+              if (node.children && findPaste(node.children as typeof elements)) return true;
+            }
+            return false;
+          };
+          findPaste(elements);
+        } catch {
+          // ignore parse errors
+        }
+
+        if (pasteX === undefined || pasteY === undefined) {
+          throw new Error("Paste menu did not appear. Make sure a text field is focused before calling ui_type.");
+        }
+
+        await idb("ui", "tap", "--udid", actualUdid, "--", String(pasteX), String(pasteY));
 
         return {
           isError: false,
@@ -377,9 +455,7 @@ if (!isToolFiltered("ui_type")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error typing text into the iOS Simulator: ${
-                  toError(error).message
-                }`
+                `Error typing text into the iOS Simulator: ${toError(error).message}`
               ),
             },
           ],

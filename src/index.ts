@@ -86,6 +86,9 @@ function isToolFiltered(toolName: string): boolean {
   return FILTERED_TOOLS.includes(toolName);
 }
 
+// Tracks active recording processes by UDID so stop_recording can kill precisely
+const activeRecordings = new Map<string, import("child_process").ChildProcess>();
+
 const server = new McpServer({
   name: "ios-simulator",
   version: require("../package.json").version,
@@ -389,6 +392,138 @@ if (!isToolFiltered("ui_type")) {
   );
 }
 
+if (!isToolFiltered("ui_paste")) {
+  server.tool(
+    "ui_paste",
+    "Paste text (including emoji and Unicode) into the focused input field in the iOS Simulator. Use this instead of ui_type when the text contains emoji or non-ASCII characters.",
+    {
+      text: z
+        .string()
+        .max(500)
+        .describe("Text to paste, supports emoji and Unicode (e.g. '😭🚩 he ghosted me')"),
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      x: z
+        .number()
+        .optional()
+        .describe("X coordinate to long-press to trigger the paste menu (defaults to last tapped position)"),
+      y: z
+        .number()
+        .optional()
+        .describe("Y coordinate to long-press to trigger the paste menu (defaults to last tapped position)"),
+    },
+    { title: "UI Paste", readOnlyHint: false, openWorldHint: true },
+    async ({ text, udid, x, y }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        // Write text to Mac clipboard then sync to simulator pasteboard
+        await run("bash", [
+          "-c",
+          `printf '%s' ${JSON.stringify(text)} | pbcopy`,
+        ]);
+        await run("xcrun", ["simctl", "pbsync", "host", actualUdid]);
+
+        // Long-press at given coordinates to trigger paste menu (if provided)
+        if (x !== undefined && y !== undefined) {
+          await idb(
+            "ui",
+            "tap",
+            "--udid",
+            actualUdid,
+            "--duration",
+            "0.8",
+            "--",
+            String(x),
+            String(y)
+          );
+
+          // Small delay for the paste menu to appear
+          await new Promise((resolve) => setTimeout(resolve, 600));
+
+          // Describe UI to find the Paste button
+          const { stdout } = await idb(
+            "ui",
+            "describe-all",
+            "--udid",
+            actualUdid,
+            "--json",
+            "--nested"
+          );
+
+          let pasteX: number | undefined;
+          let pasteY: number | undefined;
+
+          try {
+            const elements = JSON.parse(stdout) as Array<{
+              AXLabel?: string;
+              frame?: { x: number; y: number; width: number; height: number };
+              children?: unknown[];
+            }>;
+
+            const findPaste = (nodes: typeof elements): boolean => {
+              for (const node of nodes) {
+                if (node.AXLabel === "Paste" && node.frame) {
+                  pasteX = Math.round(node.frame.x + node.frame.width / 2);
+                  pasteY = Math.round(node.frame.y + node.frame.height / 2);
+                  return true;
+                }
+                if (node.children) {
+                  if (findPaste(node.children as typeof elements)) return true;
+                }
+              }
+              return false;
+            };
+
+            findPaste(elements);
+          } catch {
+            // ignore parse errors — fall through to success
+          }
+
+          if (pasteX !== undefined && pasteY !== undefined) {
+            await idb(
+              "ui",
+              "tap",
+              "--udid",
+              actualUdid,
+              "--",
+              String(pasteX),
+              String(pasteY)
+            );
+          }
+        }
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: x !== undefined && y !== undefined
+                ? "Text pasted successfully"
+                : "Text copied to simulator clipboard. Long-press a text field and tap Paste to insert it.",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error pasting text: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
 if (!isToolFiltered("ui_swipe")) {
   server.tool(
     "ui_swipe",
@@ -541,17 +676,28 @@ if (!isToolFiltered("ui_view")) {
           "--nested"
         );
 
-        const uiData = JSON.parse(uiDescribeOutput);
-        const screenFrame = uiData[0]?.frame;
-        if (!screenFrame) {
-          throw new Error("Could not determine screen dimensions");
+        let uiData: unknown;
+        try {
+          uiData = JSON.parse(uiDescribeOutput);
+        } catch {
+          throw new Error("Failed to parse screen dimensions: idb returned invalid JSON");
+        }
+        const screenFrame = (uiData as Array<{ frame?: { width: unknown; height: unknown } }>)[0]?.frame;
+        if (
+          !screenFrame ||
+          typeof screenFrame.width !== "number" ||
+          typeof screenFrame.height !== "number" ||
+          screenFrame.width <= 0 ||
+          screenFrame.height <= 0
+        ) {
+          throw new Error("Could not determine valid screen dimensions from idb output");
         }
 
         const pointWidth = screenFrame.width;
         const pointHeight = screenFrame.height;
 
-        // Generate unique file names with timestamp
-        const ts = Date.now();
+        // Generate unique file names with timestamp + random suffix to avoid collisions
+        const ts = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const rawPng = path.join(TMP_ROOT_DIR, `ui-view-${ts}-raw.png`);
         const compressedJpg = path.join(
           TMP_ROOT_DIR,
@@ -585,9 +731,15 @@ if (!isToolFiltered("ui_view")) {
           compressedJpg,
         ]);
 
-        // Read and encode the compressed image
+        // Read and encode the compressed image, then clean up temp files immediately
         const imageData = fs.readFileSync(compressedJpg);
         const base64Data = imageData.toString("base64");
+        try {
+          fs.unlinkSync(rawPng);
+          fs.unlinkSync(compressedJpg);
+        } catch {
+          // ignore cleanup errors — they'll be removed on server exit
+        }
 
         return {
           isError: false,
@@ -681,12 +833,33 @@ if (!isToolFiltered("screenshot")) {
         .describe(
           "For non-rectangular displays, handle the mask by policy (ignored, alpha, or black)"
         ),
+      max_size: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+          "Maximum dimension in pixels (width or height). If the screenshot exceeds this, it will be resized proportionally using sips. Useful to stay within Claude's 2000px API limit."
+        ),
+      force: z
+        .boolean()
+        .optional()
+        .describe(
+          "Overwrite the output file if it already exists. Defaults to false."
+        ),
     },
     { title: "Take Screenshot", readOnlyHint: false, openWorldHint: true },
-    async ({ udid, output_path, type, display, mask }) => {
+    async ({ udid, output_path, type, display, mask, max_size, force }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
         const absolutePath = ensureAbsolutePath(output_path);
+
+        // Prevent silent overwrite unless force is explicitly set
+        if (!force && fs.existsSync(absolutePath)) {
+          throw new Error(
+            `File already exists at: ${absolutePath}. Pass force: true to overwrite it.`
+          );
+        }
 
         // command is weird, it responds with stderr on success and stdout is blank
         const { stderr: stdout } = await run("xcrun", [
@@ -707,6 +880,15 @@ if (!isToolFiltered("screenshot")) {
         // throw if we don't get the expected success message
         if (stdout && !stdout.includes("Wrote screenshot to")) {
           throw new Error(stdout);
+        }
+
+        // Resize if max_size is specified and the image exceeds it
+        if (max_size) {
+          await run("sips", [
+            "--resampleHeightWidthMax",
+            String(max_size),
+            absolutePath,
+          ]);
         }
 
         return {
@@ -740,6 +922,11 @@ if (!isToolFiltered("record_video")) {
     "record_video",
     "Records a video of the iOS Simulator using simctl directly",
     {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
       output_path: z
         .string()
         .max(1024)
@@ -771,10 +958,20 @@ if (!isToolFiltered("record_video")) {
         .describe(
           "Force the output file to be written to, even if the file already exists."
         ),
+      timeout: z
+        .number()
+        .int()
+        .positive()
+        .max(3600)
+        .optional()
+        .describe(
+          "Automatically stop recording after this many seconds (1–3600). If omitted, recording continues until stop_recording is called."
+        ),
     },
     { title: "Record Video", readOnlyHint: false, openWorldHint: true },
-    async ({ output_path, codec, display, mask, force }) => {
+    async ({ udid, output_path, codec, display, mask, force, timeout }) => {
       try {
+        const actualUdid = await getBootedDeviceId(udid);
         const defaultFileName = `simulator_recording_${Date.now()}.mp4`;
         const outputFile = ensureAbsolutePath(output_path ?? defaultFileName);
 
@@ -782,7 +979,7 @@ if (!isToolFiltered("record_video")) {
         const recordingProcess = spawn("xcrun", [
           "simctl",
           "io",
-          "booted",
+          actualUdid,
           "recordVideo",
           ...(codec ? [`--codec=${codec}`] : []),
           ...(display ? [`--display=${display}`] : []),
@@ -795,35 +992,63 @@ if (!isToolFiltered("record_video")) {
           outputFile,
         ]);
 
-        // Wait for recording to start
+        // Wait for recording to start or fail within 5 seconds
         await new Promise((resolve, reject) => {
           let errorOutput = "";
+          let resolved = false;
 
           recordingProcess.stderr.on("data", (data) => {
             const message = data.toString();
             if (message.includes("Recording started")) {
+              resolved = true;
               resolve(true);
             } else {
               errorOutput += message;
             }
           });
 
-          // Set timeout for start verification
-          setTimeout(() => {
-            if (recordingProcess.killed) {
-              reject(new Error("Recording process terminated unexpectedly"));
-            } else {
-              resolve(true);
+          recordingProcess.on("exit", (code) => {
+            if (!resolved) {
+              reject(new Error(
+                errorOutput.trim() || `Recording process exited early with code ${code}`
+              ));
             }
-          }, 3000);
+          });
+
+          setTimeout(() => {
+            if (!resolved) {
+              if (recordingProcess.killed || recordingProcess.exitCode !== null) {
+                reject(new Error(errorOutput.trim() || "Recording process terminated unexpectedly"));
+              } else {
+                // Process still running but no "Recording started" message — assume it started
+                resolve(true);
+              }
+            }
+          }, 5000);
         });
+
+        activeRecordings.set(actualUdid, recordingProcess);
+        recordingProcess.on("exit", () => activeRecordings.delete(actualUdid));
+
+        if (timeout) {
+          setTimeout(() => {
+            const proc = activeRecordings.get(actualUdid);
+            if (proc && proc.pid) {
+              proc.kill("SIGINT");
+            }
+          }, timeout * 1000);
+        }
+
+        const stopNote = timeout
+          ? `Recording will automatically stop after ${timeout} second${timeout === 1 ? "" : "s"}.`
+          : "To stop recording, use the stop_recording command.";
 
         return {
           isError: false,
           content: [
             {
               type: "text",
-              text: `Recording started. The video will be saved to: ${outputFile}\nTo stop recording, use the stop_recording command.`,
+              text: `Recording started. The video will be saved to: ${outputFile}\n${stopNote}`,
             },
           ],
         };
@@ -847,14 +1072,30 @@ if (!isToolFiltered("record_video")) {
 if (!isToolFiltered("stop_recording")) {
   server.tool(
     "stop_recording",
-    "Stops the simulator video recording using killall",
-    {},
+    "Stops the simulator video recording",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe(
+          "Udid of the simulator whose recording should be stopped. Can also be set with the IDB_UDID env var. If omitted, stops the recording for the booted simulator."
+        ),
+    },
     { title: "Stop Recording", readOnlyHint: false, openWorldHint: true },
-    async () => {
+    async ({ udid }) => {
       try {
-        await run("pkill", ["-SIGINT", "-f", "simctl.*recordVideo"]);
+        const actualUdid = await getBootedDeviceId(udid);
+        const proc = activeRecordings.get(actualUdid);
 
-        // Wait a moment for the video to finalize
+        if (proc && proc.pid) {
+          proc.kill("SIGINT");
+        } else {
+          // Fallback: no tracked process — use pkill as a safety net
+          await run("pkill", ["-SIGINT", "-f", "simctl.*recordVideo"]).catch(() => {});
+        }
+
+        // Wait for the video file to be finalised
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         return {
@@ -1003,6 +1244,184 @@ if (!isToolFiltered("launch_app")) {
               type: "text",
               text: errorWithTroubleshooting(
                 `Error launching app: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("terminate_app")) {
+  server.tool(
+    "terminate_app",
+    "Terminates a running app on the iOS Simulator by bundle identifier",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      bundle_id: z
+        .string()
+        .max(256)
+        .describe("Bundle identifier of the app to terminate (e.g., com.apple.mobilesafari)"),
+    },
+    { title: "Terminate App", readOnlyHint: false, openWorldHint: true },
+    async ({ udid, bundle_id }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        await run("xcrun", [
+          "simctl",
+          "terminate",
+          actualUdid,
+          bundle_id,
+        ]);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `App ${bundle_id} terminated successfully`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error terminating app: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("open_url")) {
+  server.tool(
+    "open_url",
+    "Opens a URL in the iOS Simulator, useful for testing deep links and universal links",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      url: z
+        .string()
+        .max(2048)
+        .describe("The URL or deep link to open (e.g., https://example.com or myapp://screen/detail)"),
+    },
+    { title: "Open URL", readOnlyHint: false, openWorldHint: true },
+    async ({ udid, url }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        await run("xcrun", [
+          "simctl",
+          "openurl",
+          actualUdid,
+          url,
+        ]);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `Opened URL: ${url}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error opening URL: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("list_apps")) {
+  server.tool(
+    "list_apps",
+    "Lists all installed apps on the iOS Simulator with their bundle identifiers and display names",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+    },
+    { title: "List Installed Apps", readOnlyHint: true, openWorldHint: true },
+    async ({ udid }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        const { stdout } = await run("xcrun", [
+          "simctl",
+          "listapps",
+          actualUdid,
+        ]);
+
+        // Parse the plist output to extract bundle ID and display name
+        const apps: { bundleId: string; name: string }[] = [];
+        const bundleIdMatches = stdout.matchAll(/"([^"]+)" = \{/g);
+
+        for (const match of bundleIdMatches) {
+          const bundleId = match[1];
+          // Find the display name for this bundle
+          const blockStart = stdout.indexOf(match[0]);
+          const blockEnd = stdout.indexOf("\n    };", blockStart);
+          const block = stdout.slice(blockStart, blockEnd);
+
+          const nameMatch =
+            block.match(/CFBundleDisplayName = "([^"]+)"/) ||
+            block.match(/CFBundleName = "([^"]+)"/);
+
+          const name = nameMatch ? nameMatch[1] : bundleId;
+          apps.push({ bundleId, name });
+        }
+
+        const appList = apps
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((a) => `${a.name} — ${a.bundleId}`)
+          .join("\n");
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: appList || "No apps found",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error listing apps: ${toError(error).message}`
               ),
             },
           ],

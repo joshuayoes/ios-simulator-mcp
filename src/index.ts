@@ -1012,6 +1012,184 @@ if (!isToolFiltered("launch_app")) {
   );
 }
 
+if (!isToolFiltered("terminate_app")) {
+  server.tool(
+    "terminate_app",
+    "Terminates a running app on the iOS Simulator by bundle identifier",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      bundle_id: z
+        .string()
+        .max(256)
+        .describe("Bundle identifier of the app to terminate (e.g., com.apple.mobilesafari)"),
+    },
+    { title: "Terminate App", readOnlyHint: false, openWorldHint: true },
+    async ({ udid, bundle_id }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        await run("xcrun", [
+          "simctl",
+          "terminate",
+          actualUdid,
+          bundle_id,
+        ]);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `App ${bundle_id} terminated successfully`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error terminating app: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("open_url")) {
+  server.tool(
+    "open_url",
+    "Opens a URL in the iOS Simulator, useful for testing deep links and universal links",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      url: z
+        .string()
+        .max(2048)
+        .describe("The URL or deep link to open (e.g., https://example.com or myapp://screen/detail)"),
+    },
+    { title: "Open URL", readOnlyHint: false, openWorldHint: true },
+    async ({ udid, url }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        await run("xcrun", [
+          "simctl",
+          "openurl",
+          actualUdid,
+          url,
+        ]);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `Opened URL: ${url}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error opening URL: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("list_apps")) {
+  server.tool(
+    "list_apps",
+    "Lists all installed apps on the iOS Simulator with their bundle identifiers and display names",
+    {
+      udid: z
+        .string()
+        .regex(UDID_REGEX)
+        .optional()
+        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+    },
+    { title: "List Installed Apps", readOnlyHint: true, openWorldHint: true },
+    async ({ udid }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        const { stdout } = await run("xcrun", [
+          "simctl",
+          "listapps",
+          actualUdid,
+        ]);
+
+        // Parse the plist output to extract bundle ID and display name
+        const apps: { bundleId: string; name: string }[] = [];
+        const bundleIdMatches = stdout.matchAll(/"([^"]+)" = \{/g);
+
+        for (const match of bundleIdMatches) {
+          const bundleId = match[1];
+          // Find the display name for this bundle
+          const blockStart = stdout.indexOf(match[0]);
+          const blockEnd = stdout.indexOf("\n    };", blockStart);
+          const block = stdout.slice(blockStart, blockEnd);
+
+          const nameMatch =
+            block.match(/CFBundleDisplayName = "([^"]+)"/) ||
+            block.match(/CFBundleName = "([^"]+)"/);
+
+          const name = nameMatch ? nameMatch[1] : bundleId;
+          apps.push({ bundleId, name });
+        }
+
+        const appList = apps
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((a) => `${a.name} — ${a.bundleId}`)
+          .join("\n");
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: appList || "No apps found",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error listing apps: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
 async function runServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);

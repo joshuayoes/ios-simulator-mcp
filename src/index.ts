@@ -432,7 +432,7 @@ if (!isToolFiltered("ui_paste")) {
             "--udid",
             actualUdid,
             "--duration",
-            "1.5",
+            "0.8",
             "--",
             String(x),
             String(y)

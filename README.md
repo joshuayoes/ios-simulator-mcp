@@ -190,6 +190,11 @@ This project has been featured and mentioned in various publications and resourc
 
 ```typescript
 {
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
   /** Optional output path. If not provided, a default name will be used. The file will be saved in the directory specified by `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` or in `~/Downloads` if the environment variable is not set. */
   output_path?: string;
   /** Specifies the codec type: "h264" or "hevc". Default is "hevc". */

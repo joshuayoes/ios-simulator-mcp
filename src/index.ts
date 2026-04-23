@@ -93,6 +93,41 @@ async function run(
 }
 
 /**
+ * Runs a command with arguments, pipes `stdin` to it, and returns the stdout and stderr.
+ * Used when we need to feed the output of one command into another without going through a shell.
+ */
+async function runWithStdin(
+  cmd: string,
+  args: string[],
+  stdin: string
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { shell: false });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            `${cmd} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`
+          )
+        );
+      } else {
+        resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
+      }
+    });
+    child.stdin.end(stdin);
+  });
+}
+
+/**
  * Gets the IDB command path from environment variable or defaults to "idb"
  * @returns The path to the IDB executable
  * @throws Error if custom path is specified but doesn't exist
@@ -1387,6 +1422,7 @@ if (!isToolFiltered("terminate_app")) {
           "simctl",
           "terminate",
           actualUdid,
+          "--",
           bundle_id,
         ]);
 
@@ -1440,6 +1476,7 @@ if (!isToolFiltered("open_url")) {
           "simctl",
           "openurl",
           actualUdid,
+          "--",
           url,
         ]);
 
@@ -1485,33 +1522,34 @@ if (!isToolFiltered("list_apps")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        const { stdout } = await run("xcrun", [
+        const { stdout: plistText } = await run("xcrun", [
           "simctl",
           "listapps",
           actualUdid,
         ]);
 
-        // Parse the plist output to extract bundle ID and display name
-        const apps: { bundleId: string; name: string }[] = [];
-        const bundleIdMatches = stdout.matchAll(/"([^"]+)" = \{/g);
+        // `simctl listapps` emits NeXTSTEP-style plist text that varies in
+        // whitespace across Xcode versions. Delegate parsing to `plutil` which
+        // converts it to JSON regardless of formatting quirks.
+        const { stdout: jsonText } = await runWithStdin(
+          "plutil",
+          ["-convert", "json", "-o", "-", "--", "-"],
+          plistText
+        );
 
-        for (const match of bundleIdMatches) {
-          const bundleId = match[1];
-          // Find the display name for this bundle
-          const blockStart = stdout.indexOf(match[0]);
-          const blockEnd = stdout.indexOf("\n    };", blockStart);
-          const block = stdout.slice(blockStart, blockEnd);
+        const rawApps = JSON.parse(jsonText) as Record<
+          string,
+          { CFBundleDisplayName?: string; CFBundleName?: string }
+        >;
 
-          const nameMatch =
-            block.match(/CFBundleDisplayName = "([^"]+)"/) ||
-            block.match(/CFBundleName = "([^"]+)"/);
-
-          const name = nameMatch ? nameMatch[1] : bundleId;
-          apps.push({ bundleId, name });
-        }
+        const apps = Object.entries(rawApps)
+          .map(([bundleId, info]) => ({
+            bundleId,
+            name: info.CFBundleDisplayName ?? info.CFBundleName ?? bundleId,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
 
         const appList = apps
-          .sort((a, b) => a.name.localeCompare(b.name))
           .map((a) => `${a.name} — ${a.bundleId}`)
           .join("\n");
 

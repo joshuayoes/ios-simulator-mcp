@@ -52,6 +52,9 @@ The server provides these tools (can be filtered via environment variables):
 - `stop_recording` - Stop video recording
 - `install_app` - Install an app bundle (.app or .ipa) on the simulator
 - `launch_app` - Launch an app by bundle identifier
+- `terminate_app` - Terminate a running app by bundle identifier
+- `open_url` - Open a URL or deep link in the simulator
+- `list_apps` - List all installed apps with their bundle IDs and display names
 
 ## Testing
 

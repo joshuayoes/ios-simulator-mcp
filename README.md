@@ -293,6 +293,58 @@ This project has been featured and mentioned in various publications and resourc
 }
 ```
 
+### `terminate_app`
+
+**Description:** Terminates a running app on the iOS Simulator by bundle identifier. Useful for testing cold-start flows and verifying crash recovery without reinstalling the app.
+
+**Parameters:**
+
+```typescript
+{
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
+  /** Bundle identifier of the app to terminate (e.g., com.apple.mobilesafari) */
+  bundle_id: string;
+}
+```
+
+### `open_url`
+
+**Description:** Opens a URL or deep link in the iOS Simulator. Handles `https://` URLs (via Safari), custom URL schemes, and universal links — essential for testing deep-link routing and OAuth redirect flows.
+
+**Parameters:**
+
+```typescript
+{
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
+  /** The URL or deep link to open (e.g., https://example.com or myapp://screen/detail) */
+  url: string;
+}
+```
+
+### `list_apps`
+
+**Description:** Lists all installed apps on the iOS Simulator with their bundle identifiers and display names, sorted alphabetically. Removes the need to look up bundle IDs manually before calling `launch_app` or `terminate_app`.
+
+**Parameters:**
+
+```typescript
+{
+  /**
+   * Udid of target, can also be set with the IDB_UDID env var
+   * Format: UUID (8-4-4-4-12 hexadecimal characters)
+   */
+  udid?: string;
+}
+```
+
 ## 💡 Use Case: QA Step via MCP Tool Calls
 
 This MCP server allows AI assistants integrated with a Model Context Protocol (MCP) client to perform Quality Assurance tasks by making tool calls. This is useful immediately after implementing features to help ensure UI consistency and correct behavior.

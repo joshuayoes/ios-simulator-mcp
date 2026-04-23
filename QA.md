@@ -25,3 +25,14 @@ You can run a test case copy and pasting the test case into a chat in an MCP cli
 15. Call `screenshot` to take a screenshot of the current page.
 16. Call `ui_view` to view the current page.
 17. Call `stop_recording` to stop the screen recording.
+
+## Test Case: App Lifecycle (terminate_app, open_url, list_apps)
+
+**Note:** Assumes at least one simulator is booted.
+
+1. Call `get_booted_sim_id` to get the UDID of the booted simulator.
+2. Call `list_apps` and confirm the response includes at least Safari (`com.apple.mobilesafari`) along with other system apps, sorted alphabetically by display name.
+3. Call `open_url` with `https://example.com` and confirm Safari launches and loads the page.
+4. Call `terminate_app` with `com.apple.mobilesafari` and confirm Safari is no longer running (Safari window closes / home screen is shown).
+5. Call `open_url` with a custom-scheme deep link for an app you have installed (e.g. `maps://?q=Apple+Park`) and confirm the correct app opens.
+6. Call `terminate_app` with a bogus bundle ID (e.g. `com.does.not.exist`) and confirm a friendly error message is returned.

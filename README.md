@@ -122,6 +122,26 @@ This project has been featured and mentioned in various publications and resourc
 }
 ```
 
+#### Pull-to-refresh (downward swipe preset)
+
+Use `ui_swipe` for pull-to-refresh on a main scroll view. The finger must move **down** (`y_start` < `y_end`); upward swipes scroll content but do not trigger refresh. Short or fast swipes often scroll without refreshing—use a slow, long downward drag.
+
+On an iPhone portrait simulator (~393×852 pt), a preset that works for many list screens:
+
+```json
+{
+  "duration": "1.2",
+  "x_start": 196,
+  "y_start": 130,
+  "x_end": 196,
+  "y_end": 580
+}
+```
+
+Adjust coordinates for your simulator size and layout. This only applies to the main scroll view (not modal sheets—dismiss modals first). After swiping, wait for the refresh to finish (e.g. several seconds) before calling `ui_describe_all` again.
+
+E2E flows that use this preset: `e2e/pk-us-share-owner-revokes-invitee.md` (owner Phase C, invitee Phase E) in consuming projects.
+
 ### `ui_describe_point`
 
 **Description:** Returns the accessibility element at given co-ordinates on the iOS Simulator's screen

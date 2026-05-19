@@ -1,5 +1,4 @@
 
-https://github.com/user-attachments/assets/a88e449c-8f1d-46a5-9816-0f97e071c460
 
 
 # iOS Simulator MCP Server
@@ -10,7 +9,7 @@ A Model Context Protocol (MCP) server for interacting with iOS simulators. This 
 
 > **Security Notice**: Command injection vulnerabilities present in versions < 1.3.3 have been fixed. Please update to v1.3.3 or later. See [SECURITY.md](SECURITY.md) for details.
 
-<video src="demo.mp4" width="100%" controls autoplay loop muted></video>
+[demo.mp4](https://github.com/user-attachments/assets/a88e449c-8f1d-46a5-9816-0f97e071c460)
 
 ## 🌟 Featured In
 

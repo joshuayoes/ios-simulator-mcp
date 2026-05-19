@@ -6,7 +6,7 @@ A Model Context Protocol (MCP) server for interacting with iOS simulators. This 
 
 > **Security Notice**: Command injection vulnerabilities present in versions < 1.3.3 have been fixed. Please update to v1.3.3 or later. See [SECURITY.md](SECURITY.md) for details.
 
-demo.mp4
+<video src="demo.mp4" width="100%" controls autoplay loop muted></video>
 
 ## 🌟 Featured In
 

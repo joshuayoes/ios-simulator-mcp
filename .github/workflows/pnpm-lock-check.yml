@@ -20,8 +20,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24.x"
-      - name: Activate pinned pnpm
-        run: corepack prepare pnpm@11.10.0 --activate
+      - name: Enable corepack and activate pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.10.0 --activate
       - name: Regenerate pnpm-lock.yaml from package-lock.json
         run: pnpm import
       - name: Fail if pnpm-lock.yaml is out of sync

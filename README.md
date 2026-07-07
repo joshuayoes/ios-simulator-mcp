@@ -368,6 +368,38 @@ After a feature implementation, instruct your AI assistant within its MCP client
   Launch the Safari app (com.apple.mobilesafari) on the simulator
   ```
 
+## 🧭 Tip: Deep Link Straight to a Screen
+
+Agents can waste a lot of iterations tapping and swiping their way to a deeply
+nested route. When your app registers a URL scheme (or Universal Link), it's
+usually faster to jump directly to the target screen instead of navigating there
+step by step.
+
+You can open a deep link with [`uri-scheme`](https://www.npmjs.com/package/uri-scheme):
+
+```bash
+npx uri-scheme open "myapp://products/42" --ios
+```
+
+This targets the currently booted simulator. Under the hood it's equivalent to:
+
+```bash
+xcrun simctl openurl booted "myapp://products/42"
+```
+
+Both work for custom schemes (`myapp://...`) and web URLs (`https://...`, which
+trigger Universal Links if your app is configured for them).
+
+**Example prompt:**
+
+```
+Open the deep link myapp://products/42 in the simulator, then verify the product
+details screen is shown
+```
+
+Use this to shorten agent loops: deep link to the screen under test, then use the
+UI tools (`ui_describe_all`, `ui_tap`, `ui_view`, …) to validate it.
+
 ## Prerequisites
 
 - Node.js

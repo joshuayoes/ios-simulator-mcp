@@ -49,6 +49,19 @@ describe("against a booted simulator", { skip }, () => {
     assert.deepEqual([...header], [0x89, 0x50, 0x4e, 0x47]);
   });
 
+  test("screenshot overwrites an existing file when force is true", async () => {
+    const outputPath = path.join(outputDir, "overwrite.png");
+    fs.writeFileSync(outputPath, "sentinel");
+    const response = await client.callTool("screenshot", {
+      output_path: outputPath,
+      type: "png",
+      force: true,
+    });
+    assert.equal(response.result.isError, false);
+    const header = fs.readFileSync(outputPath).subarray(0, 4);
+    assert.deepEqual([...header], [0x89, 0x50, 0x4e, 0x47]);
+  });
+
   test("launch_app launches Safari and reports a PID", async () => {
     const response = await client.callTool("launch_app", {
       bundle_id: "com.apple.mobilesafari",

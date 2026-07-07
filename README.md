@@ -203,8 +203,12 @@ This project has been featured and mentioned in various publications and resourc
   display?: "internal" | "external";
   /** For non-rectangular displays, handle the mask by policy (ignored, alpha, or black) */
   mask?: "ignored" | "alpha" | "black";
+  /** Force the output file to be written to, even if the file already exists. */
+  force?: boolean;
 }
 ```
+
+> **Output path policy:** screenshots and videos may only be written inside `~/Downloads`, the OS temp directory, or the directory set via `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR`. Existing files are only replaced when `force: true` is passed.
 
 ### `record_video`
 

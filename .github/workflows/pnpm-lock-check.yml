@@ -1,0 +1,32 @@
+# Verifies pnpm-lock.yaml stays in lockstep with package-lock.json.
+#
+# pnpm-lock.yaml is derived from package-lock.json via `pnpm import`. This
+# workflow regenerates it and fails if the committed file is stale, so the two
+# lockfiles can't silently drift apart. It does not touch npm, the build, or the
+# publish workflow.
+#
+# Optional: this is a guardrail for the additive pnpm support, not a requirement
+# for the npm-based workflow. Remove this file to drop the check.
+name: pnpm-lock in sync
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  pnpm-lock-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+      - name: Activate pinned pnpm
+        run: corepack prepare pnpm@11.10.0 --activate
+      - name: Regenerate pnpm-lock.yaml from package-lock.json
+        run: pnpm import
+      - name: Fail if pnpm-lock.yaml is out of sync
+        run: |
+          if ! git diff --exit-code pnpm-lock.yaml; then
+            echo "::error::pnpm-lock.yaml is out of sync with package-lock.json. Run 'pnpm import' and commit the result."
+            exit 1
+          fi

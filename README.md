@@ -414,13 +414,17 @@ Cursor manages MCP servers through its configuration file located at `~/.cursor/
     git clone https://github.com/joshuayoes/ios-simulator-mcp
     cd ios-simulator-mcp
     ```
-2.  Install dependencies:
+2.  Install dependencies (npm is the default; pnpm is also supported):
     ```bash
     npm install
+    # or, using pnpm (installs from the committed pnpm-lock.yaml):
+    pnpm install
     ```
 3.  Build the project:
     ```bash
     npm run build
+    # or:
+    pnpm run build
     ```
 4.  Edit your Cursor MCP configuration file (as shown in Option 1).
 5.  Add or update the `mcpServers` section, pointing to your local build:

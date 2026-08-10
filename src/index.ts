@@ -1371,7 +1371,7 @@ async function runServer() {
 runServer().catch(console.error);
 
 process.stdin.on("close", () => {
-  console.log("iOS Simulator MCP Server closed");
+  console.error("iOS Simulator MCP Server closed");
   server.close();
   try {
     fs.rmSync(TMP_ROOT_DIR, { recursive: true, force: true });

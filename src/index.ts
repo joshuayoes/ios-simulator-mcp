@@ -404,21 +404,22 @@ if (!isToolFiltered("ui_type")) {
     { title: "UI Type", readOnlyHint: false, openWorldHint: true },
     async ({ udid, text }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
+        // Use AppleScript keystroke to type text into the Simulator.
+        // Unlike idb's HID-based approach, AppleScript sends Unicode characters
+        // directly, making it keyboard-layout-independent (AZERTY, QWERTZ, etc.)
+        // See: https://github.com/joshuayoes/ios-simulator-mcp/issues/43
+        await run("osascript", [
+          "-e",
+          'tell application "Simulator" to activate',
+        ]);
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
-        const { stderr } = await idb(
-          "ui",
-          "text",
-          "--udid",
-          actualUdid,
-          // When passing user-provided values to a command, it's crucial to use `--`
-          // to separate the command's options from positional arguments.
-          // This prevents the shell from misinterpreting the arguments as options.
-          "--",
-          text
-        );
-
-        if (stderr) throw new Error(stderr);
+        // Escape backslashes and double quotes for AppleScript string literal
+        const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        await run("osascript", [
+          "-e",
+          `tell application "System Events" to keystroke "${escaped}"`,
+        ]);
 
         return {
           isError: false,

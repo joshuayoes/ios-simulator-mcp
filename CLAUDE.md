@@ -8,6 +8,8 @@ This is the iOS Simulator MCP (Model Context Protocol) server - a tool that enab
 
 ## Build and Development Commands
 
+`npm` is the default; `pnpm` is also supported (a `pnpm-lock.yaml`, derived from `package-lock.json` via `pnpm import`, is committed). Substitute `pnpm` for `npm` in any command below.
+
 ```bash
 # Install dependencies
 npm install

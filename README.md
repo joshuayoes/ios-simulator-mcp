@@ -437,6 +437,20 @@ Cursor manages MCP servers through its configuration file located at `~/.cursor/
     }
     ```
     Ensure the JSON structure is valid, especially if `mcpServers` already exists.
+
+    If you prefer pnpm, use its `dlx` runner instead:
+
+    ```json
+    {
+      "mcpServers": {
+        "ios-simulator": {
+          "command": "pnpm",
+          "args": ["dlx", "ios-simulator-mcp"]
+        }
+      }
+    }
+    ```
+
 3.  Restart Cursor for the changes to take effect.
 
 #### Option 2: Local Development
@@ -446,13 +460,17 @@ Cursor manages MCP servers through its configuration file located at `~/.cursor/
     git clone https://github.com/joshuayoes/ios-simulator-mcp
     cd ios-simulator-mcp
     ```
-2.  Install dependencies:
+2.  Install dependencies (npm is the default; pnpm is also supported):
     ```bash
     npm install
+    # or, using pnpm (installs from the committed pnpm-lock.yaml):
+    pnpm install
     ```
 3.  Build the project:
     ```bash
     npm run build
+    # or:
+    pnpm run build
     ```
 4.  Edit your Cursor MCP configuration file (as shown in Option 1).
 5.  Add or update the `mcpServers` section, pointing to your local build:
@@ -479,6 +497,8 @@ Claude Code CLI can manage MCP servers using the `claude mcp` commands or by edi
 1.  Add the server using the `claude mcp add` command:
     ```bash
     claude mcp add ios-simulator npx ios-simulator-mcp
+    # or, with pnpm:
+    claude mcp add ios-simulator -- pnpm dlx ios-simulator-mcp
     ```
 2.  Restart any running Claude Code sessions if necessary.
 

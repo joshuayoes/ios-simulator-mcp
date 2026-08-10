@@ -1,0 +1,50 @@
+# Verifies pnpm-lock.yaml stays in lockstep with package-lock.json.
+#
+# pnpm-lock.yaml is derived from package-lock.json via `pnpm import`. This
+# workflow regenerates it and fails if the committed file is stale, so the two
+# lockfiles can't silently drift apart. It does not touch npm, the build, or the
+# publish workflow.
+#
+# NOTE: PNPM_VERSION below is the only place the pnpm version is pinned
+# (package.json intentionally has no `packageManager` field, since npm is the
+# default and a pnpm `packageManager` pin would block corepack-enabled npm
+# users). If you bump PNPM_VERSION, regenerate pnpm-lock.yaml with that same
+# version and commit both in the same PR, or this check will fail for
+# unrelated PRs.
+#
+# Optional: this is a guardrail for the additive pnpm support, not a requirement
+# for the npm-based workflow. Remove this file to drop the check.
+name: pnpm-lock in sync
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: pnpm-lock-check-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  PNPM_VERSION: 11.10.0
+jobs:
+  pnpm-lock-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - name: Regenerate pnpm-lock.yaml from package-lock.json
+        run: pnpm import
+      - name: Fail if pnpm-lock.yaml is out of sync
+        # -I ignores metadata-only churn: `pnpm import` embeds mutable registry
+        # metadata (deprecation notices), which can change without any edit to
+        # package-lock.json. Version/integrity drift still fails the check.
+        run: |
+          if ! git diff -I '^[[:space:]]*deprecated:' --exit-code pnpm-lock.yaml; then
+            echo "::error::pnpm-lock.yaml is out of sync with package-lock.json. Regenerate it with pnpm ${PNPM_VERSION} (e.g. 'npx pnpm@${PNPM_VERSION} import') and commit the result."
+            exit 1
+          fi

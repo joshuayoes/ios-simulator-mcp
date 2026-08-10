@@ -5,14 +5,14 @@
 > spec-conformance checklist and the target eval architecture.
 > **Status:** Living doc. Written against MCP spec revision 2026-07-28; this
 > server currently speaks the **legacy (initialize-handshake) wire era** — see
-> [Wire era](#wire-era). Test suite PRs: none merged; PR #75 open, undecided.
+> [Wire era](#wire-era). No conventional test suite ships, by design.
 > **Audience:** maintainer + review agents. Grep this header to decide whether to load the rest.
 
 ## Philosophy: why there is no conventional test suite
 
 This repo deliberately ships no unit or integration suite. That is a decision,
-not an omission (issue #21 explored strategies; contributed suites have not
-been merged — PR #75 remains open):
+not an omission — test strategies have been explored and contributed suites
+have been proposed, but none has been merged:
 
 1. **The failure modes live outside the process.** The bugs that matter are in
    the seam between the server and `simctl`/`idb`/macOS: plist output with five
@@ -24,11 +24,13 @@ been merged — PR #75 remains open):
    UI task on a simulator." That is only observable by running an agent.
 3. **Claims-based verification scales with review effort.** Every PR claim gets
    one concrete tool-call check against a real booted simulator. The evidence
-   base: non-determinism caught in PR #44 (`amazing jazz` → `amazingjazz.` + 45
-   trailing spaces on one run, clean on the next), real-output parsing bugs in
-   PR #61 (regex expected `" = {"`, real simctl emits five spaces), end-to-end
-   env propagation proof in PR #47 (`ps eww -p <pid>` on the launched child).
-   A mocked suite would have passed all three.
+   base from past reviews: a keystroke-based typing rewrite that passed the
+   author's tests but produced `amazing jazz` → `amazingjazz.` + 45 trailing
+   spaces on one harness run and clean output on the next; a parser whose regex
+   expected `" = {"` where real simctl output has five spaces (zero apps found
+   on a simulator with 28 installed); env-var propagation proven end-to-end
+   with `ps eww -p <pid>` on the launched child rather than trusting the tool's
+   success response. A mocked suite would have passed all three.
 
 The long-term investment is an **eval** (scored, repeatable, trended), not test
 inventory. The [target architecture](#target-eval-architecture) below is that
@@ -104,7 +106,7 @@ guide does not duplicate it.
 
 ## Wire era
 
-As of the SDK v2 migration (PR #80), the server uses
+As of the SDK v2 migration, the server uses
 `@modelcontextprotocol/server` ^2.0.0 with zod ^4.2 and `registerTool()`, and
 connects via `server.connect(new StdioServerTransport())` from
 `@modelcontextprotocol/server/stdio`.
@@ -134,7 +136,7 @@ source — gaps are TODOs, not aspirations.
 | 4 | `tools/list`: deterministic order | Fixed registration order in a single file. | ✅ |
 | 5 | `inputSchema`: valid JSON Schema 2020-12, never null | zod 4 emits draft 2020-12; verified by deep-diff against a v1 baseline during the SDK v2 migration. | ✅ |
 | 6 | **Annotations are claims with unsafe defaults** (`readOnlyHint` false, `destructiveHint` true, `openWorldHint` true when unset) — annotate every tool deliberately | Every tool has `title` + `readOnlyHint` (describe/view tools true). But `openWorldHint` is `true` on every tool — a local booted sim is a **closed** world, should be `false`. `destructiveHint` is never set (tap/type/swipe default to destructive, which is right, but it's accidental, not deliberate). | ⚠️ TODO — flip `openWorldHint`, set `destructiveHint` explicitly |
-| 7 | **Error-channel discipline**: `isError: true` + actionable prose for anything the model can fix; `-32602` for unknown tool / schema violations; never surface tool failures as protocol errors; `-32020`–`-32099` is spec-reserved | Tool failures return `isError: true` with troubleshooting links; schema violations and unknown tools return `-32602`. Verified empirically (17-case adversarial suite, PR #80). | ✅ |
+| 7 | **Error-channel discipline**: `isError: true` + actionable prose for anything the model can fix; `-32602` for unknown tool / schema violations; never surface tool failures as protocol errors; `-32020`–`-32099` is spec-reserved | Tool failures return `isError: true` with troubleshooting links; schema violations and unknown tools return `-32602`. Verified empirically (17-case adversarial suite during the SDK v2 migration). | ✅ |
 | 8 | **Statelessness direction**: no implicit cross-call state | `udid` is an optional arg with an implicit "currently booted sim" fallback. Convenient today; non-conformant direction — a stdio process is not a session, and clients may interleave conversations. UDID belongs in args; any future cross-call state should be an explicit server-minted handle. | ⚠️ documented direction, no change yet |
 
 ### Tooling for the checklist
@@ -243,9 +245,9 @@ the task" with "does it pick the tool" makes both unreadable.
 
 ## Known hazards
 
-- **Coordinate spaces (issue #49):** describe/tap coordinate handling is
-  inconsistent under rotation. Until fixed, results are only trustworthy in
-  **portrait**. Pin orientation in every episode.
+- **Coordinate spaces:** describe/tap coordinate handling is inconsistent
+  under rotation (known open bug). Until fixed, results are only trustworthy
+  in **portrait**. Pin orientation in every episode.
 - **a11y-snapshot instability:** XCTest has a hard 60-level depth ceiling and
   truncates **silently** — deep hierarchies (React Native, nested SwiftUI)
   yield false negatives with no error. Trees are for *grounding* (finding

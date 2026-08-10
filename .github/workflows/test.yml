@@ -1,0 +1,18 @@
+# Runs the protocol-level integration tests on every push/PR.
+# These tests spawn the built server and speak MCP over stdio; they do not
+# require idb or a booted simulator (simulator tests skip themselves).
+name: Test
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+      - run: npm ci
+      - run: npm test

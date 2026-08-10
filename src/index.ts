@@ -843,6 +843,57 @@ function ensureAbsolutePath(filePath: string): string {
   return path.join(defaultDir, filePath);
 }
 
+/**
+ * Directories that output files (screenshots, videos) may be written to:
+ * ~/Downloads, the OS temp dir, and IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR when set.
+ */
+function getAllowedOutputDirs(): string[] {
+  const dirs = [path.join(os.homedir(), "Downloads"), os.tmpdir()];
+
+  const customDefaultDir = process.env.IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR;
+  if (customDefaultDir) {
+    dirs.push(
+      customDefaultDir.startsWith("~/")
+        ? path.join(os.homedir(), customDefaultDir.slice(2))
+        : customDefaultDir
+    );
+  }
+
+  return dirs.map((dir) => path.resolve(dir));
+}
+
+function isAllowedPath(absolutePath: string): boolean {
+  const resolved = path.resolve(absolutePath);
+  return getAllowedOutputDirs().some(
+    (dir) => resolved === dir || resolved.startsWith(dir + path.sep)
+  );
+}
+
+/**
+ * Resolves an output path and enforces the output policy: the path must be
+ * inside an allowed directory, and existing files are only replaced when
+ * `force` is true.
+ */
+function assertWritableOutputPath(filePath: string, force?: boolean): string {
+  const absolutePath = ensureAbsolutePath(filePath);
+
+  if (!isAllowedPath(absolutePath)) {
+    throw new Error(
+      `Output path is not allowed: ${absolutePath}. Allowed directories: ${getAllowedOutputDirs().join(
+        ", "
+      )}. Set IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR to allow a custom directory.`
+    );
+  }
+
+  if (!force && fs.existsSync(absolutePath)) {
+    throw new Error(
+      `File already exists: ${absolutePath}. Pass force: true to replace it.`
+    );
+  }
+
+  return absolutePath;
+}
+
 if (!isToolFiltered("screenshot")) {
   server.tool(
     "screenshot",
@@ -877,12 +928,18 @@ if (!isToolFiltered("screenshot")) {
         .describe(
           "For non-rectangular displays, handle the mask by policy (ignored, alpha, or black)"
         ),
+      force: z
+        .boolean()
+        .optional()
+        .describe(
+          "Force the output file to be written to, even if the file already exists."
+        ),
     },
     { title: "Take Screenshot", readOnlyHint: false, openWorldHint: true },
-    async ({ udid, output_path, type, display, mask }) => {
+    async ({ udid, output_path, type, display, mask, force }) => {
       try {
+        const absolutePath = assertWritableOutputPath(output_path, force);
         const actualUdid = await getBootedDeviceId(udid);
-        const absolutePath = ensureAbsolutePath(output_path);
 
         // command is weird, it responds with stderr on success and stdout is blank
         const { stderr: stdout } = await run("xcrun", [
@@ -976,9 +1033,12 @@ if (!isToolFiltered("record_video")) {
     { title: "Record Video", readOnlyHint: false, openWorldHint: true },
     async ({ udid, output_path, codec, display, mask, force }) => {
       try {
-        const actualUdid = await getBootedDeviceId(udid);
         const defaultFileName = `simulator_recording_${Date.now()}.mp4`;
-        const outputFile = ensureAbsolutePath(output_path ?? defaultFileName);
+        const outputFile = assertWritableOutputPath(
+          output_path ?? defaultFileName,
+          force
+        );
+        const actualUdid = await getBootedDeviceId(udid);
 
         // Start the recording process
         const recordingProcess = spawn("xcrun", [

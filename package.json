@@ -17,6 +17,8 @@
     "prepare": "npm run build",
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "start": "node build/index.js",
+    "pretest": "npm run build",
+    "test": "node --test test/",
     "watch": "tsc --watch",
     "predev": "npm run build",
     "dev": "npx @modelcontextprotocol/inspector node build/index.js"

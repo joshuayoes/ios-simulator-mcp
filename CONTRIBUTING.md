@@ -75,6 +75,14 @@ For additional context and references, see [CONTEXT.md](CONTEXT.md) which contai
    npm run dev
    ```
 
+5. **Run the automated tests**
+
+   ```bash
+   npm test
+   ```
+
+   The suite uses Node's built-in `node:test` runner (no extra dependencies) and speaks MCP over stdio against the built server. Protocol and input-validation tests run anywhere; tests in `test/simulator.test.js` need a booted simulator and skip themselves when none is available. For full manual QA, see [QA.md](QA.md).
+
 ## Dependency Management & Upgrades
 
 To maintain maximum compatibility with the MCP ecosystem, we align our dependencies with those used by `@modelcontextprotocol/sdk`. This ensures seamless integration and reduces potential conflicts.

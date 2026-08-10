@@ -1179,7 +1179,7 @@ if (!isToolFiltered("launch_app")) {
           "Terminate the app if it is already running before launching"
         ),
       env: z
-        .record(z.string())
+        .record(z.string(), z.string())
         .optional()
         .describe("Environment variables to pass to simctl launch"),
     },

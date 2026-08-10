@@ -32,8 +32,11 @@
     "url": "https://joshuayoes.com"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -40,8 +40,11 @@ jobs:
       - name: Regenerate pnpm-lock.yaml from package-lock.json
         run: pnpm import
       - name: Fail if pnpm-lock.yaml is out of sync
+        # -I ignores metadata-only churn: `pnpm import` embeds mutable registry
+        # metadata (deprecation notices), which can change without any edit to
+        # package-lock.json. Version/integrity drift still fails the check.
         run: |
-          if ! git diff --exit-code pnpm-lock.yaml; then
+          if ! git diff -I '^[[:space:]]*deprecated:' --exit-code pnpm-lock.yaml; then
             echo "::error::pnpm-lock.yaml is out of sync with package-lock.json. Regenerate it with pnpm ${PNPM_VERSION} (e.g. 'npx pnpm@${PNPM_VERSION} import') and commit the result."
             exit 1
           fi

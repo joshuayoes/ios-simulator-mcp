@@ -10,7 +10,7 @@ This project is **intentionally simple** and follows these core principles:
 
 - **Single file architecture**: All logic is contained in `src/index.ts` to simplify bundling and maintenance
 - **Minimal dependencies**: We keep dependencies minimal to ensure fast installs and small footprint on user machines
-- **Standard tooling**: We use `npm` (universally available) and `tsc` (simple, already available) for building
+- **Standard tooling**: We use `npm` (universally available) and `tsc` (simple, already available) for building; a derived `pnpm-lock.yaml` is committed for pnpm users, but `package-lock.json` remains the source of truth
 
 ### Real Use Cases Only
 
@@ -124,7 +124,13 @@ npm ls --depth=0
    npm run dev  # Test with MCP inspector
    ```
 
-4. **Verify compatibility**:
+4. **Regenerate the pnpm lockfile** (required whenever `package-lock.json` changes; CI fails otherwise):
+
+   ```bash
+   pnpm import   # regenerates pnpm-lock.yaml from package-lock.json
+   ```
+
+5. **Verify compatibility**:
    - Test all existing functionality
    - Run through the test cases in [QA.md](QA.md)
    - Ensure no new TypeScript errors

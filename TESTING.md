@@ -96,10 +96,11 @@ runs non-interactively and leaves a transcript.
 
 ### Manual release scenario
 
-[QA.md](QA.md) is a scripted 17-step agent transcript (Photos app) pasted into
-an MCP client on release — an eval spec in prose form: scripted scenario, run
-by an agent, judged by a human. The eval roadmap mechanizes it; until then it
-stays the release checklist. This guide does not duplicate it.
+[QA.md](QA.md) is a scripted agent transcript — one version-agnostic Settings
+scenario exercising every tool — pasted into an MCP client on release: an eval
+spec in prose form, scripted scenario, run by an agent, judged by a human. The
+eval roadmap mechanizes it; until then it stays the release checklist. This
+guide does not duplicate it.
 
 ## Wire era
 
@@ -236,8 +237,8 @@ the task" with "does it pick the tool" makes both unreadable.
   fed the agent's own final self-report** (judges reading self-reports is the
   documented failure mode behind inflated web-agent numbers).
 - Every task ships a scripted `cheat()` oracle — a known-correct solution that
-  must pass the grader before the task counts. QA.md's 17 steps are 17 oracle
-  steps waiting for state assertions.
+  must pass the grader before the task counts. QA.md's scenario steps are
+  oracle steps waiting for state assertions.
 - Someone reads transcripts before believing a number.
 
 ## Known hazards

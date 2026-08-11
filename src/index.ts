@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import { McpServer } from "@modelcontextprotocol/server";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import { z } from "zod";
@@ -61,7 +61,7 @@ const UDID_REGEX =
   /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
 
 const TMP_ROOT_DIR = fs.mkdtempSync(
-  path.join(os.tmpdir(), "ios-simulator-mcp-")
+  path.join(os.tmpdir(), "ios-simulator-mcp-"),
 );
 
 /**
@@ -77,7 +77,7 @@ type RunOptions = {
 async function run(
   cmd: string,
   args: string[],
-  options: RunOptions = {}
+  options: RunOptions = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const mergedEnv = options.env
     ? { ...process.env, ...options.env }
@@ -109,7 +109,7 @@ function getIdbPath(): string {
     // Check if the path exists
     if (!fs.existsSync(expandedPath)) {
       throw new Error(
-        `Custom IDB path specified in IOS_SIMULATOR_MCP_IDB_PATH does not exist: ${expandedPath}`
+        `Custom IDB path specified in IOS_SIMULATOR_MCP_IDB_PATH does not exist: ${expandedPath}`,
       );
     }
 
@@ -132,7 +132,7 @@ async function idb(...args: string[]) {
 // Read filtered tools from environment variable
 const FILTERED_TOOLS =
   process.env.IOS_SIMULATOR_MCP_FILTERED_TOOLS?.split(",").map((tool) =>
-    tool.trim()
+    tool.trim(),
   ) || [];
 
 // Function to check if a tool is filtered
@@ -193,7 +193,7 @@ async function getBootedDevice() {
 }
 
 async function getBootedDeviceId(
-  deviceId: string | undefined
+  deviceId: string | undefined,
 ): Promise<string> {
   // If deviceId not provided, get the currently booted simulator
   let actualDeviceId = deviceId;
@@ -209,10 +209,16 @@ async function getBootedDeviceId(
 
 // Register tools only if they're not filtered
 if (!isToolFiltered("get_booted_sim_id")) {
-  server.tool(
+  server.registerTool(
     "get_booted_sim_id",
-    "Get the ID of the currently booted iOS simulator",
-    { title: "Get Booted Simulator ID", readOnlyHint: true, openWorldHint: true },
+    {
+      description: "Get the ID of the currently booted iOS simulator",
+      annotations: {
+        title: "Get Booted Simulator ID",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+    },
     async () => {
       try {
         const { id, name } = await getBootedDevice();
@@ -233,21 +239,27 @@ if (!isToolFiltered("get_booted_sim_id")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error: ${toError(error).message}`
+                `Error: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("open_simulator")) {
-  server.tool(
+  server.registerTool(
     "open_simulator",
-    "Opens the iOS Simulator application",
-    { title: "Open Simulator", readOnlyHint: false, openWorldHint: true },
+    {
+      description: "Opens the iOS Simulator application",
+      annotations: {
+        title: "Open Simulator",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
+    },
     async () => {
       try {
         await run("open", ["-a", "Simulator.app"]);
@@ -268,28 +280,37 @@ if (!isToolFiltered("open_simulator")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error opening Simulator.app: ${toError(error).message}`
+                `Error opening Simulator.app: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("ui_describe_all")) {
-  server.tool(
+  server.registerTool(
     "ui_describe_all",
-    "Describes accessibility information for the entire screen in the iOS Simulator",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      description:
+        "Describes accessibility information for the entire screen in the iOS Simulator",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+      }),
+      annotations: {
+        title: "Describe All UI Elements",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
-    { title: "Describe All UI Elements", readOnlyHint: true, openWorldHint: true },
     async ({ udid }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -300,7 +321,7 @@ if (!isToolFiltered("ui_describe_all")) {
           "--udid",
           actualUdid,
           "--json",
-          "--nested"
+          "--nested",
         );
 
         return {
@@ -314,35 +335,43 @@ if (!isToolFiltered("ui_describe_all")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error describing all of the ui: ${toError(error).message}`
+                `Error describing all of the ui: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("ui_tap")) {
-  server.tool(
+  server.registerTool(
     "ui_tap",
-    "Tap on the screen in the iOS Simulator",
     {
-      duration: z
-        .string()
-        .regex(/^\d+(\.\d+)?$/)
-        .optional()
-        .describe("Press duration"),
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      x: z.number().describe("The x-coordinate"),
-      y: z.number().describe("The x-coordinate"),
+      description: "Tap on the screen in the iOS Simulator",
+      inputSchema: z.object({
+        duration: z
+          .string()
+          .regex(/^\d+(\.\d+)?$/)
+          .optional()
+          .describe("Press duration"),
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        x: z.number().describe("The x-coordinate"),
+        y: z.number().describe("The x-coordinate"),
+      }),
+      annotations: {
+        title: "UI Tap",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
     },
-    { title: "UI Tap", readOnlyHint: false, openWorldHint: true },
     async ({ duration, udid, x, y }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -359,7 +388,7 @@ if (!isToolFiltered("ui_tap")) {
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
           String(x),
-          String(y)
+          String(y),
         );
 
         if (stderr) throw new Error(stderr);
@@ -375,33 +404,41 @@ if (!isToolFiltered("ui_tap")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error tapping on the screen: ${toError(error).message}`
+                `Error tapping on the screen: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("ui_type")) {
-  server.tool(
+  server.registerTool(
     "ui_type",
-    "Input text into the iOS Simulator",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      text: z
-        .string()
-        .max(500)
-        .regex(/^[\x20-\x7E]+$/)
-        .describe("Text to input"),
+      description: "Input text into the iOS Simulator",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        text: z
+          .string()
+          .max(500)
+          .regex(/^[\x20-\x7E]+$/)
+          .describe("Text to input"),
+      }),
+      annotations: {
+        title: "UI Type",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
     },
-    { title: "UI Type", readOnlyHint: false, openWorldHint: true },
     async ({ udid, text }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -415,7 +452,7 @@ if (!isToolFiltered("ui_type")) {
           // to separate the command's options from positional arguments.
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
-          text
+          text,
         );
 
         if (stderr) throw new Error(stderr);
@@ -433,42 +470,50 @@ if (!isToolFiltered("ui_type")) {
               text: errorWithTroubleshooting(
                 `Error typing text into the iOS Simulator: ${
                   toError(error).message
-                }`
+                }`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("ui_swipe")) {
-  server.tool(
+  server.registerTool(
     "ui_swipe",
-    "Swipe on the screen in the iOS Simulator",
     {
-      duration: z
-        .string()
-        .regex(/^\d+(\.\d+)?$/)
-        .optional()
-        .describe("Swipe duration in seconds (e.g., 0.1)"),
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      x_start: z.number().describe("The starting x-coordinate"),
-      y_start: z.number().describe("The starting y-coordinate"),
-      x_end: z.number().describe("The ending x-coordinate"),
-      y_end: z.number().describe("The ending y-coordinate"),
-      delta: z
-        .number()
-        .optional()
-        .describe("The size of each step in the swipe (default is 1)")
-        .default(1),
+      description: "Swipe on the screen in the iOS Simulator",
+      inputSchema: z.object({
+        duration: z
+          .string()
+          .regex(/^\d+(\.\d+)?$/)
+          .optional()
+          .describe("Swipe duration in seconds (e.g., 0.1)"),
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        x_start: z.number().describe("The starting x-coordinate"),
+        y_start: z.number().describe("The starting y-coordinate"),
+        x_end: z.number().describe("The ending x-coordinate"),
+        y_end: z.number().describe("The ending y-coordinate"),
+        delta: z
+          .number()
+          .optional()
+          .describe("The size of each step in the swipe (default is 1)")
+          .default(1),
+      }),
+      annotations: {
+        title: "UI Swipe",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
     },
-    { title: "UI Swipe", readOnlyHint: false, openWorldHint: true },
     async ({ duration, udid, x_start, y_start, x_end, y_end, delta }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -488,7 +533,7 @@ if (!isToolFiltered("ui_swipe")) {
           String(x_start),
           String(y_start),
           String(x_end),
-          String(y_end)
+          String(y_end),
         );
 
         if (stderr) throw new Error(stderr);
@@ -504,30 +549,39 @@ if (!isToolFiltered("ui_swipe")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error swiping on the screen: ${toError(error).message}`
+                `Error swiping on the screen: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("ui_describe_point")) {
-  server.tool(
+  server.registerTool(
     "ui_describe_point",
-    "Returns the accessibility element at given co-ordinates on the iOS Simulator's screen",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      x: z.number().describe("The x-coordinate"),
-      y: z.number().describe("The y-coordinate"),
+      description:
+        "Returns the accessibility element at given co-ordinates on the iOS Simulator's screen",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        x: z.number().describe("The x-coordinate"),
+        y: z.number().describe("The y-coordinate"),
+      }),
+      annotations: {
+        title: "Describe UI Point",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
-    { title: "Describe UI Point", readOnlyHint: true, openWorldHint: true },
     async ({ udid, x, y }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -543,7 +597,7 @@ if (!isToolFiltered("ui_describe_point")) {
           // This prevents the shell from misinterpreting the arguments as options.
           "--",
           String(x),
-          String(y)
+          String(y),
         );
 
         if (stderr) throw new Error(stderr);
@@ -559,50 +613,63 @@ if (!isToolFiltered("ui_describe_point")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error describing point (${x}, ${y}): ${toError(error).message}`
+                `Error describing point (${x}, ${y}): ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("ui_find_element")) {
-  server.tool(
+  server.registerTool(
     "ui_find_element",
-    "Searches the accessibility tree and returns elements matching the given criteria",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      search: z
-        .array(z.string().min(1))
-        .min(1)
-        .describe(
-          "Array of search strings. An element matches if ANY string matches against its AXLabel or AXUniqueId"
-        ),
-      type: z
-        .string()
-        .optional()
-        .describe(
-          "Filter by element type (e.g. 'Button', 'StaticText', 'Group'). Case-insensitive exact match"
-        ),
-      matchMode: z
-        .enum(["substring", "exact"])
-        .optional()
-        .default("substring")
-        .describe("Match mode for search strings: 'substring' (default) or 'exact'"),
-      caseSensitive: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Whether search matching is case-sensitive (default: false)"),
+      description:
+        "Searches the accessibility tree and returns elements matching the given criteria",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        search: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe(
+            "Array of search strings. An element matches if ANY string matches against its AXLabel or AXUniqueId",
+          ),
+        type: z
+          .string()
+          .optional()
+          .describe(
+            "Filter by element type (e.g. 'Button', 'StaticText', 'Group'). Case-insensitive exact match",
+          ),
+        matchMode: z
+          .enum(["substring", "exact"])
+          .optional()
+          .default("substring")
+          .describe(
+            "Match mode for search strings: 'substring' (default) or 'exact'",
+          ),
+        caseSensitive: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe(
+            "Whether search matching is case-sensitive (default: false)",
+          ),
+      }),
+      annotations: {
+        title: "Find UI Element",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
-    { title: "Find UI Element", readOnlyHint: true, openWorldHint: true },
     async ({ search, type, matchMode, caseSensitive, udid }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -613,7 +680,7 @@ if (!isToolFiltered("ui_find_element")) {
           "--udid",
           actualUdid,
           "--json",
-          "--nested"
+          "--nested",
         );
 
         const uiData = JSON.parse(stdout);
@@ -622,7 +689,7 @@ if (!isToolFiltered("ui_find_element")) {
           value: string | null,
           term: string,
           mode: "substring" | "exact",
-          sensitive: boolean
+          sensitive: boolean,
         ): boolean {
           if (value == null) return false;
           const v = sensitive ? value : value.toLowerCase();
@@ -631,7 +698,7 @@ if (!isToolFiltered("ui_find_element")) {
         }
 
         function findElements(
-          elements: Array<Record<string, unknown>>
+          elements: Array<Record<string, unknown>>,
         ): Array<Record<string, unknown>> {
           const results: Array<Record<string, unknown>> = [];
 
@@ -643,7 +710,7 @@ if (!isToolFiltered("ui_find_element")) {
             const matchesAnySearch = search.some(
               (term) =>
                 matchesSearch(label, term, matchMode, caseSensitive) ||
-                matchesSearch(uniqueId, term, matchMode, caseSensitive)
+                matchesSearch(uniqueId, term, matchMode, caseSensitive),
             );
 
             const matchesType =
@@ -656,8 +723,7 @@ if (!isToolFiltered("ui_find_element")) {
             }
 
             const children = element.children as
-              | Array<Record<string, unknown>>
-              | undefined;
+              Array<Record<string, unknown>> | undefined;
             if (children && children.length > 0) {
               results.push(...findElements(children));
             }
@@ -684,28 +750,37 @@ if (!isToolFiltered("ui_find_element")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error finding UI elements: ${toError(error).message}`
+                `Error finding UI elements: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("ui_view")) {
-  server.tool(
+  server.registerTool(
     "ui_view",
-    "Get the image content of a compressed screenshot of the current simulator view",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      description:
+        "Get the image content of a compressed screenshot of the current simulator view",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+      }),
+      annotations: {
+        title: "View Screenshot",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
-    { title: "View Screenshot", readOnlyHint: true, openWorldHint: true },
     async ({ udid }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -717,16 +792,20 @@ if (!isToolFiltered("ui_view")) {
           "--udid",
           actualUdid,
           "--json",
-          "--nested"
+          "--nested",
         );
 
         let uiData: unknown;
         try {
           uiData = JSON.parse(uiDescribeOutput);
         } catch {
-          throw new Error("Failed to parse screen dimensions: idb returned invalid JSON");
+          throw new Error(
+            "Failed to parse screen dimensions: idb returned invalid JSON",
+          );
         }
-        const screenFrame = (uiData as Array<{ frame?: { width: unknown; height: unknown } }>)[0]?.frame;
+        const screenFrame = (
+          uiData as Array<{ frame?: { width: unknown; height: unknown } }>
+        )[0]?.frame;
         if (
           !screenFrame ||
           typeof screenFrame.width !== "number" ||
@@ -734,7 +813,9 @@ if (!isToolFiltered("ui_view")) {
           screenFrame.width <= 0 ||
           screenFrame.height <= 0
         ) {
-          throw new Error("Could not determine valid screen dimensions from idb output");
+          throw new Error(
+            "Could not determine valid screen dimensions from idb output",
+          );
         }
 
         const pointWidth = screenFrame.width;
@@ -745,7 +826,7 @@ if (!isToolFiltered("ui_view")) {
         const rawPng = path.join(TMP_ROOT_DIR, `ui-view-${ts}-raw.png`);
         const compressedJpg = path.join(
           TMP_ROOT_DIR,
-          `ui-view-${ts}-compressed.jpg`
+          `ui-view-${ts}-compressed.jpg`,
         );
 
         // Capture screenshot as PNG
@@ -806,13 +887,13 @@ if (!isToolFiltered("ui_view")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error capturing screenshot: ${toError(error).message}`
+                `Error capturing screenshot: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
@@ -844,41 +925,49 @@ function ensureAbsolutePath(filePath: string): string {
 }
 
 if (!isToolFiltered("screenshot")) {
-  server.tool(
+  server.registerTool(
     "screenshot",
-    "Takes a screenshot of the iOS Simulator",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      output_path: z
-        .string()
-        .max(1024)
-        .describe(
-          "File path where the screenshot will be saved. If relative, it uses the directory specified by the `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` env var, or `~/Downloads` if not set."
-        ),
-      type: z
-        .enum(["png", "tiff", "bmp", "gif", "jpeg"])
-        .optional()
-        .describe(
-          "Image format (png, tiff, bmp, gif, or jpeg). Default is png."
-        ),
-      display: z
-        .enum(["internal", "external"])
-        .optional()
-        .describe(
-          "Display to capture (internal or external). Default depends on device type."
-        ),
-      mask: z
-        .enum(["ignored", "alpha", "black"])
-        .optional()
-        .describe(
-          "For non-rectangular displays, handle the mask by policy (ignored, alpha, or black)"
-        ),
+      description: "Takes a screenshot of the iOS Simulator",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        output_path: z
+          .string()
+          .max(1024)
+          .describe(
+            "File path where the screenshot will be saved. If relative, it uses the directory specified by the `IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR` env var, or `~/Downloads` if not set.",
+          ),
+        type: z
+          .enum(["png", "tiff", "bmp", "gif", "jpeg"])
+          .optional()
+          .describe(
+            "Image format (png, tiff, bmp, gif, or jpeg). Default is png.",
+          ),
+        display: z
+          .enum(["internal", "external"])
+          .optional()
+          .describe(
+            "Display to capture (internal or external). Default depends on device type.",
+          ),
+        mask: z
+          .enum(["ignored", "alpha", "black"])
+          .optional()
+          .describe(
+            "For non-rectangular displays, handle the mask by policy (ignored, alpha, or black)",
+          ),
+      }),
+      annotations: {
+        title: "Take Screenshot",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
     },
-    { title: "Take Screenshot", readOnlyHint: false, openWorldHint: true },
     async ({ udid, output_path, type, display, mask }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -921,59 +1010,67 @@ if (!isToolFiltered("screenshot")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error taking screenshot: ${toError(error).message}`
+                `Error taking screenshot: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("record_video")) {
-  server.tool(
+  server.registerTool(
     "record_video",
-    "Records a video of the iOS Simulator using simctl directly",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      output_path: z
-        .string()
-        .max(1024)
-        .optional()
-        .describe(
-          `Optional output path. If not provided, a default name will be used. The file will be saved in the directory specified by \`IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR\` or in \`~/Downloads\` if the environment variable is not set.`
-        ),
-      codec: z
-        .enum(["h264", "hevc"])
-        .optional()
-        .describe(
-          'Specifies the codec type: "h264" or "hevc". Default is "hevc".'
-        ),
-      display: z
-        .enum(["internal", "external"])
-        .optional()
-        .describe(
-          'Display to capture: "internal" or "external". Default depends on device type.'
-        ),
-      mask: z
-        .enum(["ignored", "alpha", "black"])
-        .optional()
-        .describe(
-          'For non-rectangular displays, handle the mask by policy: "ignored", "alpha", or "black".'
-        ),
-      force: z
-        .boolean()
-        .optional()
-        .describe(
-          "Force the output file to be written to, even if the file already exists."
-        ),
+      description: "Records a video of the iOS Simulator using simctl directly",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        output_path: z
+          .string()
+          .max(1024)
+          .optional()
+          .describe(
+            `Optional output path. If not provided, a default name will be used. The file will be saved in the directory specified by \`IOS_SIMULATOR_MCP_DEFAULT_OUTPUT_DIR\` or in \`~/Downloads\` if the environment variable is not set.`,
+          ),
+        codec: z
+          .enum(["h264", "hevc"])
+          .optional()
+          .describe(
+            'Specifies the codec type: "h264" or "hevc". Default is "hevc".',
+          ),
+        display: z
+          .enum(["internal", "external"])
+          .optional()
+          .describe(
+            'Display to capture: "internal" or "external". Default depends on device type.',
+          ),
+        mask: z
+          .enum(["ignored", "alpha", "black"])
+          .optional()
+          .describe(
+            'For non-rectangular displays, handle the mask by policy: "ignored", "alpha", or "black".',
+          ),
+        force: z
+          .boolean()
+          .optional()
+          .describe(
+            "Force the output file to be written to, even if the file already exists.",
+          ),
+      }),
+      annotations: {
+        title: "Record Video",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
     },
-    { title: "Record Video", readOnlyHint: false, openWorldHint: true },
     async ({ udid, output_path, codec, display, mask, force }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -1014,16 +1111,27 @@ if (!isToolFiltered("record_video")) {
 
           recordingProcess.on("exit", (code) => {
             if (!resolved) {
-              reject(new Error(
-                errorOutput.trim() || `Recording process exited early with code ${code}`
-              ));
+              reject(
+                new Error(
+                  errorOutput.trim() ||
+                    `Recording process exited early with code ${code}`,
+                ),
+              );
             }
           });
 
           setTimeout(() => {
             if (!resolved) {
-              if (recordingProcess.killed || recordingProcess.exitCode !== null) {
-                reject(new Error(errorOutput.trim() || "Recording process terminated unexpectedly"));
+              if (
+                recordingProcess.killed ||
+                recordingProcess.exitCode !== null
+              ) {
+                reject(
+                  new Error(
+                    errorOutput.trim() ||
+                      "Recording process terminated unexpectedly",
+                  ),
+                );
               } else {
                 // Process still running but no "Recording started" message — assume it started
                 resolve(true);
@@ -1048,22 +1156,28 @@ if (!isToolFiltered("record_video")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error starting recording: ${toError(error).message}`
+                `Error starting recording: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("stop_recording")) {
-  server.tool(
+  server.registerTool(
     "stop_recording",
-    "Stops the simulator video recording using killall",
-    {},
-    { title: "Stop Recording", readOnlyHint: false, openWorldHint: true },
+    {
+      description: "Stops the simulator video recording using killall",
+      inputSchema: z.object({}),
+      annotations: {
+        title: "Stop Recording",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
+    },
     async () => {
       try {
         await run("pkill", ["-SIGINT", "-f", "simctl.*recordVideo"]);
@@ -1087,34 +1201,42 @@ if (!isToolFiltered("stop_recording")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error stopping recording: ${toError(error).message}`
+                `Error stopping recording: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("install_app")) {
-  server.tool(
+  server.registerTool(
     "install_app",
-    "Installs an app bundle (.app or .ipa) on the iOS Simulator",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      app_path: z
-        .string()
-        .max(1024)
-        .describe(
-          "Path to the app bundle (.app directory or .ipa file) to install"
-        ),
+      description: "Installs an app bundle (.app or .ipa) on the iOS Simulator",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        app_path: z
+          .string()
+          .max(1024)
+          .describe(
+            "Path to the app bundle (.app directory or .ipa file) to install",
+          ),
+      }),
+      annotations: {
+        title: "Install App",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
     },
-    { title: "Install App", readOnlyHint: false, openWorldHint: true },
     async ({ udid, app_path }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -1146,44 +1268,52 @@ if (!isToolFiltered("install_app")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error installing app: ${toError(error).message}`
+                `Error installing app: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
 if (!isToolFiltered("launch_app")) {
-  server.tool(
+  server.registerTool(
     "launch_app",
-    "Launches an app on the iOS Simulator by bundle identifier",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      bundle_id: z
-        .string()
-        .max(256)
-        .describe(
-          "Bundle identifier of the app to launch (e.g., com.apple.mobilesafari)"
-        ),
-      terminate_running: z
-        .boolean()
-        .optional()
-        .describe(
-          "Terminate the app if it is already running before launching"
-        ),
-      env: z
-        .record(z.string())
-        .optional()
-        .describe("Environment variables to pass to simctl launch"),
+      description: "Launches an app on the iOS Simulator by bundle identifier",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        bundle_id: z
+          .string()
+          .max(256)
+          .describe(
+            "Bundle identifier of the app to launch (e.g., com.apple.mobilesafari)",
+          ),
+        terminate_running: z
+          .boolean()
+          .optional()
+          .describe(
+            "Terminate the app if it is already running before launching",
+          ),
+        env: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe("Environment variables to pass to simctl launch"),
+      }),
+      annotations: {
+        title: "Launch App",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
     },
-    { title: "Launch App", readOnlyHint: false, openWorldHint: true },
     async ({ udid, bundle_id, terminate_running, env }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -1223,13 +1353,13 @@ if (!isToolFiltered("launch_app")) {
             {
               type: "text",
               text: errorWithTroubleshooting(
-                `Error launching app: ${toError(error).message}`
+                `Error launching app: ${toError(error).message}`,
               ),
             },
           ],
         };
       }
-    }
+    },
   );
 }
 
@@ -1241,7 +1371,7 @@ async function runServer() {
 runServer().catch(console.error);
 
 process.stdin.on("close", () => {
-  console.log("iOS Simulator MCP Server closed");
+  console.error("iOS Simulator MCP Server closed");
   server.close();
   try {
     fs.rmSync(TMP_ROOT_DIR, { recursive: true, force: true });

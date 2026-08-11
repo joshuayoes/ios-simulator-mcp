@@ -402,7 +402,7 @@ UI tools (`ui_describe_all`, `ui_tap`, `ui_view`, …) to validate it.
 
 ## Prerequisites
 
-- Node.js
+- Node.js 20 or later
 - macOS (as iOS simulators are only available on macOS)
 - [Xcode](https://developer.apple.com/xcode/resources/) and iOS simulators installed
 - Facebook [IDB](https://fbidb.io/) tool [(see install guide)](https://fbidb.io/docs/installation)

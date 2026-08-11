@@ -77,14 +77,14 @@ For additional context and references, see [CONTEXT.md](CONTEXT.md) which contai
 
 ## Dependency Management & Upgrades
 
-To maintain maximum compatibility with the MCP ecosystem, we align our dependencies with those used by `@modelcontextprotocol/sdk`. This ensures seamless integration and reduces potential conflicts.
+To maintain maximum compatibility with the MCP ecosystem, we align our dependencies with those used by `@modelcontextprotocol/server`. This ensures seamless integration and reduces potential conflicts.
 
 ### Current Dependency Strategy
 
-- **`@modelcontextprotocol/sdk`**: Always use the latest stable version
-- **`zod`**: Match the version used by `@modelcontextprotocol/sdk` (currently `^3.23.8`)
-- **`typescript`**: Match the version used by `@modelcontextprotocol/sdk` (currently `^5.5.4`)
-- **`@types/node`**: Match the version used by `@modelcontextprotocol/sdk` (currently `^22.0.2`)
+- **`@modelcontextprotocol/server`**: Always use the latest stable version
+- **`zod`**: Match the version used by `@modelcontextprotocol/server` (currently `^4.2.0`)
+- **`typescript`**: Match the version used by `@modelcontextprotocol/server` (currently `^5.5.4`)
+- **`@types/node`**: Match the version used by `@modelcontextprotocol/server` (currently `^22.0.2`)
 
 ### Checking for Updates
 
@@ -92,10 +92,10 @@ Before upgrading dependencies, check what versions the MCP SDK uses:
 
 ```bash
 # Check MCP SDK dependencies
-npm info @modelcontextprotocol/sdk dependencies
+npm info @modelcontextprotocol/server dependencies
 
 # Check MCP SDK dev dependencies
-npm info @modelcontextprotocol/sdk devDependencies
+npm info @modelcontextprotocol/server devDependencies
 
 # Compare with current project dependencies
 npm ls --depth=0
@@ -106,7 +106,7 @@ npm ls --depth=0
 1. **Check MCP SDK versions first**:
 
    ```bash
-   npm info @modelcontextprotocol/sdk dependencies devDependencies
+   npm info @modelcontextprotocol/server dependencies devDependencies
    ```
 
 2. **Update package.json to match**:
@@ -114,7 +114,7 @@ npm ls --depth=0
    - Update `zod` to match MCP SDK version
    - Update `typescript` to match MCP SDK version
    - Update `@types/node` to match MCP SDK version
-   - Keep `@modelcontextprotocol/sdk` at latest stable
+   - Keep `@modelcontextprotocol/server` at latest stable
 
 3. **Install and test**:
 

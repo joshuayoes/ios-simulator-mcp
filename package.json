@@ -1,6 +1,6 @@
 {
   "name": "ios-simulator-mcp",
-  "version": "1.6.0",
+  "version": "2.0.0",
   "description": "MCP server for interacting with the iOS simulator",
   "bin": {
     "ios-simulator-mcp": "build/index.js"
@@ -32,12 +32,15 @@
     "url": "https://joshuayoes.com"
   },
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "zod": "^3.25.0"
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.2.0"
   },
   "devDependencies": {
-    "@modelcontextprotocol/inspector": "0.16.8",
+    "@modelcontextprotocol/inspector": "2.1.0",
     "@types/node": "^22.12.0",
     "typescript": "^5.5.4"
   }

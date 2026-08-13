@@ -1399,21 +1399,32 @@ if (!isToolFiltered("launch_app")) {
 }
 
 if (!isToolFiltered("terminate_app")) {
-  server.tool(
+  server.registerTool(
     "terminate_app",
-    "Terminates a running app on the iOS Simulator by bundle identifier",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      bundle_id: z
-        .string()
-        .max(256)
-        .describe("Bundle identifier of the app to terminate (e.g., com.apple.mobilesafari)"),
+      description:
+        "Terminates a running app on the iOS Simulator by bundle identifier",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        bundle_id: z
+          .string()
+          .max(256)
+          .describe(
+            "Bundle identifier of the app to terminate (e.g., com.apple.mobilesafari)",
+          ),
+      }),
+      annotations: {
+        title: "Terminate App",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
     },
-    { title: "Terminate App", readOnlyHint: false, openWorldHint: true },
     async ({ udid, bundle_id }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -1450,21 +1461,32 @@ if (!isToolFiltered("terminate_app")) {
 }
 
 if (!isToolFiltered("open_url")) {
-  server.tool(
+  server.registerTool(
     "open_url",
-    "Opens a URL in the iOS Simulator, useful for testing deep links and universal links",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
-      url: z
-        .string()
-        .max(2048)
-        .describe("The URL or deep link to open (e.g., https://example.com or myapp://screen/detail)"),
+      description:
+        "Opens a URL in the iOS Simulator, useful for testing deep links and universal links",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        url: z
+          .string()
+          .max(2048)
+          .describe(
+            "The URL or deep link to open (e.g., https://example.com or myapp://screen/detail)",
+          ),
+      }),
+      annotations: {
+        title: "Open URL",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
     },
-    { title: "Open URL", readOnlyHint: false, openWorldHint: true },
     async ({ udid, url }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
@@ -1501,17 +1523,26 @@ if (!isToolFiltered("open_url")) {
 }
 
 if (!isToolFiltered("list_apps")) {
-  server.tool(
+  server.registerTool(
     "list_apps",
-    "Lists all installed apps on the iOS Simulator with their bundle identifiers and display names",
     {
-      udid: z
-        .string()
-        .regex(UDID_REGEX)
-        .optional()
-        .describe("Udid of target, can also be set with the IDB_UDID env var"),
+      description:
+        "Lists all installed apps on the iOS Simulator with their bundle identifiers and display names",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+      }),
+      annotations: {
+        title: "List Installed Apps",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
-    { title: "List Installed Apps", readOnlyHint: true, openWorldHint: true },
     async ({ udid }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);

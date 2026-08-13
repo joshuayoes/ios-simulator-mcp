@@ -72,6 +72,8 @@ const TMP_ROOT_DIR = fs.mkdtempSync(
  */
 type RunOptions = {
   env?: Record<string, string>;
+  /** Data piped to the child's stdin (e.g. feeding one command's output into another without a shell) */
+  input?: string;
 };
 
 async function run(
@@ -82,49 +84,21 @@ async function run(
   const mergedEnv = options.env
     ? { ...process.env, ...options.env }
     : process.env;
-  const { stdout, stderr } = await execFileAsync(cmd, args, {
+  const promise = execFileAsync(cmd, args, {
     shell: false,
     env: mergedEnv,
   });
+  if (options.input !== undefined && promise.child.stdin) {
+    // Tolerate EPIPE if the child exits before draining stdin; the promise
+    // still rejects on non-zero exit, so failures are not silenced.
+    promise.child.stdin.on("error", () => {});
+    promise.child.stdin.end(options.input);
+  }
+  const { stdout, stderr } = await promise;
   return {
     stdout: stdout.trim(),
     stderr: stderr.trim(),
   };
-}
-
-/**
- * Runs a command with arguments, pipes `stdin` to it, and returns the stdout and stderr.
- * Used when we need to feed the output of one command into another without going through a shell.
- */
-async function runWithStdin(
-  cmd: string,
-  args: string[],
-  stdin: string
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { shell: false });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(
-          new Error(
-            `${cmd} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`
-          )
-        );
-      } else {
-        resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
-      }
-    });
-    child.stdin.end(stdin);
-  });
 }
 
 /**
@@ -1556,10 +1530,10 @@ if (!isToolFiltered("list_apps")) {
         // `simctl listapps` emits NeXTSTEP-style plist text that varies in
         // whitespace across Xcode versions. Delegate parsing to `plutil` which
         // converts it to JSON regardless of formatting quirks.
-        const { stdout: jsonText } = await runWithStdin(
+        const { stdout: jsonText } = await run(
           "plutil",
           ["-convert", "json", "-o", "-", "--", "-"],
-          plistText
+          { input: plistText },
         );
 
         const rawApps = JSON.parse(jsonText) as Record<

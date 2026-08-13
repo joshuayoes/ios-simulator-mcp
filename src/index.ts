@@ -1418,13 +1418,10 @@ if (!isToolFiltered("terminate_app")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        await run("xcrun", [
-          "simctl",
-          "terminate",
-          actualUdid,
-          "--",
-          bundle_id,
-        ]);
+        // `simctl terminate` rejects a `--` separator (usage error). Flag
+        // parsing stops at the positional device argument, so passing the
+        // bundle id directly cannot be interpreted as an option.
+        await run("xcrun", ["simctl", "terminate", actualUdid, bundle_id]);
 
         return {
           isError: false,
@@ -1472,13 +1469,10 @@ if (!isToolFiltered("open_url")) {
       try {
         const actualUdid = await getBootedDeviceId(udid);
 
-        await run("xcrun", [
-          "simctl",
-          "openurl",
-          actualUdid,
-          "--",
-          url,
-        ]);
+        // `simctl openurl` treats `--` itself as the URL operand ("failed to
+        // open --"). Flag parsing stops at the positional device argument, so
+        // passing the url directly cannot be interpreted as an option.
+        await run("xcrun", ["simctl", "openurl", actualUdid, url]);
 
         return {
           isError: false,

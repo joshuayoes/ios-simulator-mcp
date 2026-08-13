@@ -72,6 +72,8 @@ const TMP_ROOT_DIR = fs.mkdtempSync(
  */
 type RunOptions = {
   env?: Record<string, string>;
+  /** Data piped to the child's stdin (e.g. feeding one command's output into another without a shell) */
+  input?: string;
 };
 
 async function run(
@@ -82,10 +84,17 @@ async function run(
   const mergedEnv = options.env
     ? { ...process.env, ...options.env }
     : process.env;
-  const { stdout, stderr } = await execFileAsync(cmd, args, {
+  const promise = execFileAsync(cmd, args, {
     shell: false,
     env: mergedEnv,
   });
+  if (options.input !== undefined && promise.child.stdin) {
+    // Tolerate EPIPE if the child exits before draining stdin; the promise
+    // still rejects on non-zero exit, so failures are not silenced.
+    promise.child.stdin.on("error", () => {});
+    promise.child.stdin.end(options.input);
+  }
+  const { stdout, stderr } = await promise;
   return {
     stdout: stdout.trim(),
     stderr: stderr.trim(),
@@ -1360,6 +1369,212 @@ if (!isToolFiltered("launch_app")) {
         };
       }
     },
+  );
+}
+
+if (!isToolFiltered("terminate_app")) {
+  server.registerTool(
+    "terminate_app",
+    {
+      description:
+        "Terminates a running app on the iOS Simulator by bundle identifier",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        bundle_id: z
+          .string()
+          .max(256)
+          .describe(
+            "Bundle identifier of the app to terminate (e.g., com.apple.mobilesafari)",
+          ),
+      }),
+      annotations: {
+        title: "Terminate App",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ udid, bundle_id }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        // `simctl terminate` rejects a `--` separator (usage error). Flag
+        // parsing stops at the positional device argument, so passing the
+        // bundle id directly cannot be interpreted as an option.
+        await run("xcrun", ["simctl", "terminate", actualUdid, bundle_id]);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `App ${bundle_id} terminated successfully`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error terminating app: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("open_url")) {
+  server.registerTool(
+    "open_url",
+    {
+      description:
+        "Opens a URL in the iOS Simulator, useful for testing deep links and universal links",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+        url: z
+          .string()
+          .max(2048)
+          .describe(
+            "The URL or deep link to open (e.g., https://example.com or myapp://screen/detail)",
+          ),
+      }),
+      annotations: {
+        title: "Open URL",
+        readOnlyHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ udid, url }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        // `simctl openurl` treats `--` itself as the URL operand ("failed to
+        // open --"). Flag parsing stops at the positional device argument, so
+        // passing the url directly cannot be interpreted as an option.
+        await run("xcrun", ["simctl", "openurl", actualUdid, url]);
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: `Opened URL: ${url}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error opening URL: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
+  );
+}
+
+if (!isToolFiltered("list_apps")) {
+  server.registerTool(
+    "list_apps",
+    {
+      description:
+        "Lists all installed apps on the iOS Simulator with their bundle identifiers and display names",
+      inputSchema: z.object({
+        udid: z
+          .string()
+          .regex(UDID_REGEX)
+          .optional()
+          .describe(
+            "Udid of target, can also be set with the IDB_UDID env var",
+          ),
+      }),
+      annotations: {
+        title: "List Installed Apps",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ udid }) => {
+      try {
+        const actualUdid = await getBootedDeviceId(udid);
+
+        const { stdout: plistText } = await run("xcrun", [
+          "simctl",
+          "listapps",
+          actualUdid,
+        ]);
+
+        // `simctl listapps` emits NeXTSTEP-style plist text that varies in
+        // whitespace across Xcode versions. Delegate parsing to `plutil` which
+        // converts it to JSON regardless of formatting quirks.
+        const { stdout: jsonText } = await run(
+          "plutil",
+          ["-convert", "json", "-o", "-", "--", "-"],
+          { input: plistText },
+        );
+
+        const rawApps = JSON.parse(jsonText) as Record<
+          string,
+          { CFBundleDisplayName?: string; CFBundleName?: string }
+        >;
+
+        const apps = Object.entries(rawApps)
+          .map(([bundleId, info]) => ({
+            bundleId,
+            name: info.CFBundleDisplayName ?? info.CFBundleName ?? bundleId,
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+
+        const appList = apps
+          .map((a) => `${a.name} — ${a.bundleId}`)
+          .join("\n");
+
+        return {
+          isError: false,
+          content: [
+            {
+              type: "text",
+              text: appList || "No apps found",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorWithTroubleshooting(
+                `Error listing apps: ${toError(error).message}`
+              ),
+            },
+          ],
+        };
+      }
+    }
   );
 }
 

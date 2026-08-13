@@ -35,3 +35,12 @@ installed.
 A pass is: every call returns without `isError`, the taps land where the
 find/describe steps said they would, and the screenshot/video artifacts exist
 and show the run. Anything else is a finding — file it.
+
+## App lifecycle scenario (terminate_app, open_url, list_apps)
+
+1. Call `get_booted_sim_id` and note the UDID.
+2. Call `list_apps` and confirm the response includes at least Safari (`com.apple.mobilesafari`) along with other system apps, sorted alphabetically by display name.
+3. Call `open_url` with `https://example.com` and confirm Safari launches and loads the page.
+4. Call `terminate_app` with `com.apple.mobilesafari` and confirm Safari is no longer running (relaunching Safari via `launch_app` should cold-start it).
+5. Call `open_url` with a custom-scheme deep link for an app on the simulator (e.g. `maps://?q=Apple+Park`) and confirm the correct app opens.
+6. Call `terminate_app` with the same bundle id again (app no longer running) and confirm a graceful error mentioning simctl's "found nothing to terminate".

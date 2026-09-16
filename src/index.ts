@@ -225,7 +225,7 @@ if (!isToolFiltered("get_booted_sim_id")) {
       annotations: {
         title: "Get Booted Simulator ID",
         readOnlyHint: true,
-        openWorldHint: true,
+        openWorldHint: false,
       },
     },
     async () => {
@@ -266,7 +266,9 @@ if (!isToolFiltered("open_simulator")) {
       annotations: {
         title: "Open Simulator",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
       },
     },
     async () => {
@@ -317,7 +319,7 @@ if (!isToolFiltered("ui_describe_all")) {
       annotations: {
         title: "Describe All UI Elements",
         readOnlyHint: true,
-        openWorldHint: true,
+        openWorldHint: false,
       },
     },
     async ({ udid }) => {
@@ -378,7 +380,8 @@ if (!isToolFiltered("ui_tap")) {
       annotations: {
         title: "UI Tap",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
       },
     },
     async ({ duration, udid, x, y }) => {
@@ -445,7 +448,8 @@ if (!isToolFiltered("ui_type")) {
       annotations: {
         title: "UI Type",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
       },
     },
     async ({ udid, text }) => {
@@ -520,7 +524,8 @@ if (!isToolFiltered("ui_swipe")) {
       annotations: {
         title: "UI Swipe",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
       },
     },
     async ({ duration, udid, x_start, y_start, x_end, y_end, delta }) => {
@@ -588,7 +593,7 @@ if (!isToolFiltered("ui_describe_point")) {
       annotations: {
         title: "Describe UI Point",
         readOnlyHint: true,
-        openWorldHint: true,
+        openWorldHint: false,
       },
     },
     async ({ udid, x, y }) => {
@@ -676,7 +681,7 @@ if (!isToolFiltered("ui_find_element")) {
       annotations: {
         title: "Find UI Element",
         readOnlyHint: true,
-        openWorldHint: true,
+        openWorldHint: false,
       },
     },
     async ({ search, type, matchMode, caseSensitive, udid }) => {
@@ -787,7 +792,7 @@ if (!isToolFiltered("ui_view")) {
       annotations: {
         title: "View Screenshot",
         readOnlyHint: true,
-        openWorldHint: true,
+        openWorldHint: false,
       },
     },
     async ({ udid }) => {
@@ -974,7 +979,8 @@ if (!isToolFiltered("screenshot")) {
       annotations: {
         title: "Take Screenshot",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
       },
     },
     async ({ udid, output_path, type, display, mask }) => {
@@ -1077,7 +1083,8 @@ if (!isToolFiltered("record_video")) {
       annotations: {
         title: "Record Video",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
       },
     },
     async ({ udid, output_path, codec, display, mask, force }) => {
@@ -1184,7 +1191,8 @@ if (!isToolFiltered("stop_recording")) {
       annotations: {
         title: "Stop Recording",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
       },
     },
     async () => {
@@ -1243,7 +1251,8 @@ if (!isToolFiltered("install_app")) {
       annotations: {
         title: "Install App",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: true,
       },
     },
     async ({ udid, app_path }) => {
@@ -1320,7 +1329,9 @@ if (!isToolFiltered("launch_app")) {
       annotations: {
         title: "Launch App",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
       },
     },
     async ({ udid, bundle_id, terminate_running, env }) => {
@@ -1396,7 +1407,8 @@ if (!isToolFiltered("terminate_app")) {
       annotations: {
         title: "Terminate App",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: true,
       },
     },
     async ({ udid, bundle_id }) => {
@@ -1458,7 +1470,8 @@ if (!isToolFiltered("open_url")) {
       annotations: {
         title: "Open URL",
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
       },
     },
     async ({ udid, url }) => {
@@ -1514,7 +1527,7 @@ if (!isToolFiltered("list_apps")) {
       annotations: {
         title: "List Installed Apps",
         readOnlyHint: true,
-        openWorldHint: true,
+        openWorldHint: false,
       },
     },
     async ({ udid }) => {

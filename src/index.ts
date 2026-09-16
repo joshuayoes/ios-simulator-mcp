@@ -1578,6 +1578,110 @@ if (!isToolFiltered("list_apps")) {
   );
 }
 
+server.registerPrompt(
+  "react_native_debugging",
+  {
+    title: "Debug a React Native app",
+    description:
+      "Guidance for driving a React Native app in development mode on the simulator",
+    argsSchema: z.object({
+      scheme: z
+        .string()
+        .optional()
+        .describe(
+          "URL scheme the app registers, used to deep link straight to a screen (e.g. myapp)",
+        ),
+    }),
+  },
+  ({ scheme }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            "You are driving a React Native app running in development mode on the iOS Simulator.",
+            "",
+            '- To reload the app, use `ui_type` to type "r" into the keyboard.',
+            `- To reach a screen, prefer \`npx uri-scheme open "${scheme ?? "myapp"}://route" --ios\` over tapping and swiping your way there.`,
+            "- To see the current screen, prefer `ui_describe_all` and read the accessibility tree as text.",
+            "- Fall back to `ui_view` only when the tree is incomplete or the screen has image content with no descriptive text.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+server.registerPrompt(
+  "navigate_to_screen",
+  {
+    title: "Navigate to a screen",
+    description:
+      "Reach a specific screen with a deep link instead of tapping through the UI",
+    argsSchema: z.object({
+      destination: z
+        .string()
+        .describe("The screen to reach (e.g. the product details screen)"),
+      scheme: z
+        .string()
+        .optional()
+        .describe("URL scheme the app registers (e.g. myapp)"),
+    }),
+  },
+  ({ destination, scheme }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            `Get the simulator to: ${destination}.`,
+            "",
+            `Navigating there by tapping and swiping wastes iterations. If the app registers a URL scheme, open a deep link with \`npx uri-scheme open "${scheme ?? "myapp"}://<route>" --ios\`, which targets the booted simulator.`,
+            "Custom schemes and https URLs both work; https URLs trigger Universal Links when the app is configured for them.",
+            "",
+            "Then confirm you arrived with `ui_describe_all` before acting on the screen.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
+server.registerPrompt(
+  "inspect_current_screen",
+  {
+    title: "Inspect the current screen",
+    description:
+      "Read the current simulator screen and interact with an element reliably",
+    argsSchema: z.object({
+      target: z
+        .string()
+        .optional()
+        .describe("Label or description of the element you want to act on"),
+    }),
+  },
+  ({ target }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            "Read the current simulator screen before acting on it.",
+            "",
+            "- Start with `ui_describe_all` for the accessibility tree as text; it is cheaper and more precise than an image.",
+            "- Use `ui_view` only when the tree is incomplete or the screen is mostly image content.",
+            `- Locate ${target ? `"${target}"` : "an element"} with \`ui_find_element\`, confirm the coordinates it returns with \`ui_describe_point\`, then act with \`ui_tap\`.`,
+            "- The accessibility tree is truncated on deep hierarchies, so treat it as a way to find things, not as proof that something is absent.",
+          ].join("\n"),
+        },
+      },
+    ],
+  }),
+);
+
 async function runServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);

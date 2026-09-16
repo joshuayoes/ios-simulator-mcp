@@ -345,6 +345,41 @@ This project has been featured and mentioned in various publications and resourc
 }
 ```
 
+## Prompts
+
+The server exposes reusable prompts that steer the model toward the workflows that
+actually work on a simulator. In Cursor they appear as slash commands; in Claude
+Code they show up under `/mcp`.
+
+### `react_native_debugging`
+
+Drives a React Native app in development mode: reload by typing `r`, reach screens
+by deep link rather than by tapping, read the accessibility tree before reaching
+for an image.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `scheme` | no | URL scheme the app registers (e.g. `myapp`) |
+
+### `navigate_to_screen`
+
+Reaches a target screen with a deep link instead of tapping through the UI, then
+confirms arrival.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `destination` | yes | The screen to reach |
+| `scheme` | no | URL scheme the app registers (e.g. `myapp`) |
+
+### `inspect_current_screen`
+
+Reads the current screen accessibility-tree-first, and locates an element with
+`ui_find_element` → `ui_describe_point` → `ui_tap` rather than guessing coordinates.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `target` | no | Label or description of the element to act on |
+
 ## 💡 Use Case: QA Step via MCP Tool Calls
 
 This MCP server allows AI assistants integrated with a Model Context Protocol (MCP) client to perform Quality Assurance tasks by making tool calls. This is useful immediately after implementing features to help ensure UI consistency and correct behavior.

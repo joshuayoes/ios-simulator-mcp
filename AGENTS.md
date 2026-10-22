@@ -9,6 +9,10 @@ single-file architecture, security rules (`--` separation, Zod validation), and 
 pnpm install && pnpm build   # or npm; output is build/index.js
 ```
 
+On pnpm 11 or later, `pnpm install` fails with `ERR_PNPM_IGNORED_BUILDS` for the MCP inspector's
+build script. The server doesn't need it: add `--config.strict-dep-builds=false`. Don't run
+`pnpm approve-builds` or commit the config it writes.
+
 ## Test against a real simulator (macOS only)
 
 There is no unit test suite, by design ([TESTING.md](TESTING.md) explains why). Verify changes

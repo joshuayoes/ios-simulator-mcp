@@ -11,6 +11,8 @@ initialize:
   - name: Install idb (idb_companion via Homebrew, fb-idb client via uv)
     run: |
       brew tap facebook/fb
+      # Homebrew 7 refuses formulae from third-party taps until they are trusted.
+      brew trust --formula facebook/fb/idb-companion
       brew install idb-companion uv
       # Python 3.12 is the version verified with fb-idb; grpcio wheels tend to lag new Pythons.
       uv tool install --python 3.12 fb-idb
@@ -20,7 +22,8 @@ maintenance:
     run: |
       # $ENVRC resets every build and differential builds skip initialize, so set PATH here.
       echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$ENVRC"
-      pnpm install --frozen-lockfile
+      # pnpm 11+ fails on skipped dependency build scripts (the inspector's); the server doesn't need them.
+      pnpm install --frozen-lockfile --config.strict-dep-builds=false
       pnpm build
   - name: Smoke test against a booted simulator
     run: |
@@ -30,7 +33,7 @@ maintenance:
 knowledge:
   - name: build
     contents: |
-      pnpm install && pnpm build   (npm works too; output goes to build/index.js)
+      pnpm install --config.strict-dep-builds=false && pnpm build   (npm works too; output goes to build/index.js)
   - name: test
     contents: |
       There is no unit test suite by design (see TESTING.md). Verify against a real simulator:

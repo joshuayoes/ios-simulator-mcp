@@ -1,0 +1,44 @@
+# Devin environment for ios-simulator-mcp (git-backed blueprint).
+# Devin reads this file from the default branch; after changing it, click Sync
+# in Settings > Environment > Blueprints. See CONTRIBUTING.md "Devin".
+# Reference: https://docs.devin.ai/onboard-devin/environment/blueprint-reference
+#
+# macOS only: this server needs Xcode, the iOS Simulator, and idb. Start sessions
+# on macOS (`!mac` in Slack, or pick macOS under the prompt box).
+runs-on: macos
+
+initialize:
+  - name: Install idb (idb_companion via Homebrew, fb-idb client via uv)
+    run: |
+      brew tap facebook/fb
+      brew install idb-companion uv
+      # Python 3.12 is the version verified with fb-idb; grpcio wheels tend to lag new Pythons.
+      uv tool install --python 3.12 fb-idb
+
+maintenance:
+  - name: Install dependencies and build
+    run: |
+      # $ENVRC resets every build and differential builds skip initialize, so set PATH here.
+      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$ENVRC"
+      pnpm install --frozen-lockfile
+      pnpm build
+  - name: Smoke test against a booted simulator
+    run: |
+      export PATH="$HOME/.local/bin:$PATH"
+      scripts/simulator-smoke.sh
+
+knowledge:
+  - name: build
+    contents: |
+      pnpm install && pnpm build   (npm works too; output goes to build/index.js)
+  - name: test
+    contents: |
+      There is no unit test suite by design (see TESTING.md). Verify against a real simulator:
+      1. Boot one and leave it booted: xcrun simctl boot "<iPhone name or UDID>" (list with xcrun simctl list devices available)
+      2. Rebuild, then run scripts/simulator-smoke.sh (checks idb sees the simulator, calls get_booted_sim_id and ui_describe_all)
+      3. Call any tool directly: npx mcp-inspector --cli node build/index.js --method tools/call --tool-name <tool> --tool-arg key=value
+      4. For a full pass, work through the scenarios in QA.md. Keep the simulator in portrait.
+  - name: idb
+    contents: |
+      idb is installed with `uv tool install fb-idb` into ~/.local/bin, and idb_companion with Homebrew.
+      If `idb` is not found, run: export PATH="$HOME/.local/bin:$PATH"

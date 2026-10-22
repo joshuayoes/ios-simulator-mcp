@@ -255,6 +255,20 @@ Include in your pull request:
 - **Description of the real use case** that drove this change
 - **Confirmation that existing functionality still works**
 
+## Devin
+
+[Devin](https://docs.devin.ai/) can work on this repo in a cloud macOS session with a real iOS
+Simulator. Its environment is a git-backed blueprint at
+[`.devin/blueprint.yaml`](.devin/blueprint.yaml): it installs idb, installs dependencies, builds,
+and runs [`scripts/simulator-smoke.sh`](scripts/simulator-smoke.sh) as part of every snapshot
+build. Agent instructions live in [AGENTS.md](AGENTS.md).
+
+- Devin reads the blueprint from the **default branch**. After a change to it is merged, click
+  **Sync** in Settings > Environment > Blueprints to apply it and rebuild the snapshot.
+- Start sessions on macOS: pick **macOS** under the prompt box, or add `!mac` in Slack. Linux
+  sessions have no simulator.
+- You can run the smoke script locally too: build, then `scripts/simulator-smoke.sh`.
+
 ## Submitting Changes
 
 1. **Create a feature branch**

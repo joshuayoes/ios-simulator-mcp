@@ -86,11 +86,31 @@ This project has been featured and mentioned in various publications and resourc
   udid?: string;
   /**
    * Text to input
-   * Format: ASCII printable characters only
+   * Format: ASCII printable characters only (method "type")
    */
   text: string;
+  /**
+   * "type" (default) or "paste"
+   */
+  method?: "type" | "paste";
+  /**
+   * Method "paste" only: clear the focused field first (default false)
+   */
+  replace?: boolean;
 }
 ```
+
+`method: "type"` (the default) runs `idb ui text`, which presses keys as on a US keyboard. On a simulator with another keyboard layout (e.g. French AZERTY) it types the wrong characters (`mobiletest@example.com` becomes `,obiletest2exq,ple:co,`), and it accepts printable ASCII only.
+
+`method: "paste"` puts the text on the simulator pasteboard and presses Cmd+V, so it works with any keyboard layout and any Unicode text. Use it for non-US keyboard layouts or non-ASCII text. It takes about 2–3 s per call instead of about 250 ms. In paste mode:
+
+- Tap the text field first. The focused field is found with `idb ui describe-all --api axbridge`; if none is found, the call returns an error and nothing is typed (some custom or React Native fields don't report focus; use `method: "type"` for those).
+- The field's value is read back to confirm the paste. Fields that block pasting return an error.
+- iOS asks "<App> would like to paste from CoreSimulatorBridge"; `ui_type` taps "Allow Paste" for you (English and French labels are recognized).
+- The simulator pasteboard is restored afterwards as plain text (non-text content such as images is not preserved). If restoring fails, the result includes a warning. If the paste prompt is still on screen when the call gives up, the text is left on the pasteboard and the error says to tap "Allow Paste" rather than retry, so the text isn't pasted twice.
+- Each `"\n"` presses Return between pasted lines. (`method: "type"` rejects newlines.)
+- `replace: true` clears the focused field before pasting, e.g. after a `"type"` attempt produced wrong characters, and then expects the field to contain exactly the new text. Cmd+A is sent by US key position and doesn't select all on every layout, so the field is cleared by moving to the end of the text (Cmd+Down, Cmd+Right) and pressing Delete once per character. If the field doesn't end up empty, the call returns an error and nothing is pasted. Clearing adds about 1–3 s.
+- It needs fb-idb 1.5.1 or later, which provides `idb ui key --command` and `idb ui describe-all --api axbridge`, and a recent idb_companion: 1.1.8 doesn't support `--api axbridge`, so every paste fails with "No focused text field was found". It was tested with idb_companion 1.7.6 (`brew upgrade idb-companion`).
 
 ### `ui_swipe`
 
@@ -457,7 +477,7 @@ UI tools (`ui_describe_all`, `ui_tap`, `ui_view`, …) to validate it.
 - Node.js 20 or later
 - macOS (as iOS simulators are only available on macOS)
 - [Xcode](https://developer.apple.com/xcode/resources/) and iOS simulators installed
-- Facebook [IDB](https://fbidb.io/) tool [(see install guide)](https://fbidb.io/docs/installation)
+- Facebook [IDB](https://fbidb.io/) tool: the `idb_companion` binary plus the `fb-idb` Python client. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#2-installing-idb) for install steps. `ui_type` with `method: "paste"` needs fb-idb 1.5.1 or later for `idb ui key --command` and `idb ui describe-all --api axbridge`, and a recent idb_companion (1.1.8 lacks `--api axbridge` support; tested with 1.7.6, `brew upgrade idb-companion`)
 
 ## Installation
 

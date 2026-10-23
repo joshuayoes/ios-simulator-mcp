@@ -36,6 +36,15 @@ A pass is: every call returns without `isError`, the taps land where the
 find/describe steps said they would, and the screenshot/video artifacts exist
 and show the run. Anything else is a finding — file it.
 
+## Non-US keyboard scenario (ui_type method "paste")
+
+1. Add a French AZERTY keyboard: `xcrun simctl spawn <udid> defaults write -g AppleKeyboards -array "en_US@sw=QWERTY;hw=Automatic" "emoji@sw=Emoji" "fr_FR@sw=AZERTY;hw=French"`.
+2. Open Settings, tap the search field, and tap the globe key on the software keyboard until `xcrun simctl spawn <udid> defaults read com.apple.keyboard.preferences KeyboardLastUsed` reports `fr_FR@sw=AZERTY;hw=French`.
+3. Call `ui_type` with `text: "mobiletest@example.com"` and the default method; confirm via `ui_describe_all` that the field shows the wrong characters (`,obiletest2exq,ple:co,`).
+4. Clear the field, call `ui_type` with `text: "mobiletest@example.com"` and `method: "paste"`, and confirm the field contains exactly that text. Repeat with `"café déjà vu"`.
+5. Open Safari, tap the address bar, and call `ui_type` with `text: "http://localhost:8081"` and `method: "paste"`; confirm the "Allow Paste" prompt is accepted automatically and the address bar contains exactly that text.
+6. Restore the keyboards: `xcrun simctl spawn <udid> defaults write -g AppleKeyboards -array "en_US@sw=QWERTY;hw=Automatic" "emoji@sw=Emoji"`.
+
 ## App lifecycle scenario (terminate_app, open_url, list_apps)
 
 1. Call `get_booted_sim_id` and note the UDID.

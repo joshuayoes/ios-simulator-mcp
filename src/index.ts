@@ -423,34 +423,370 @@ if (!isToolFiltered("ui_tap")) {
   );
 }
 
+type AXElement = {
+  type?: string;
+  AXLabel?: string | null;
+  AXValue?: string | null;
+  traits?: string[];
+  frame?: { x: number; y: number; width: number; height: number };
+};
+
+const HID_KEYCODE_V = "25";
+const HID_KEYCODE_RETURN = "40";
+const HID_KEYCODE_DELETE = "42";
+const HID_KEYCODE_SPACE = "44";
+const HID_KEYCODE_RIGHT_ARROW = "79";
+const HID_KEYCODE_DOWN_ARROW = "81";
+
+const PASTE_TIMEOUT_MS = 3000;
+
+// Without a UTF-8 locale, simctl pbcopy/pbpaste treat text as Mac Roman.
+const SIMCTL_PASTEBOARD_ENV = { LC_ALL: "en_US.UTF-8" };
+
+/** Button labels of the "Allow Paste" choice in iOS's paste permission prompt. */
+const ALLOW_PASTE_LABELS = ["Allow Paste", "Autoriser le collage"];
+
+/** Runs an idb command that needs a recent fb-idb, with an upgrade hint for older ones. */
+async function idbForPaste(...args: string[]) {
+  try {
+    return await idb(...args);
+  } catch (error) {
+    const { message } = toError(error);
+    if (/unrecognized arguments|invalid choice/.test(message)) {
+      throw new Error(
+        `Your idb client is too old for method "paste", which needs \`idb ui key --command\` and \`idb ui describe-all --api axbridge\`. Upgrade to fb-idb 1.5.1 or later (pip install --upgrade fb-idb), or use method "type". ${message}`,
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * The axbridge backend also sees fields the default reader misses (e.g. the
+ * Settings search field or web content) and marks the focused one with the
+ * IsEditing trait. Only the keys needed here are requested, which halves the
+ * read time.
+ */
+async function describeForTyping(udid: string): Promise<AXElement[]> {
+  const keys = ["type", "AXLabel", "AXValue", "traits", "frame"];
+  const { stdout } = await idbForPaste(
+    "ui",
+    "describe-all",
+    "--udid",
+    udid,
+    "--json",
+    "--api",
+    "axbridge",
+    ...keys.flatMap((key) => ["--key", key]),
+  );
+  return JSON.parse(stdout);
+}
+
+function focusedField(elements: AXElement[]): AXElement | undefined {
+  return elements.find((e) => e.traits?.includes("IsEditing"));
+}
+
+async function readFocusedField(udid: string): Promise<AXElement> {
+  const field = focusedField(await describeForTyping(udid));
+  if (!field) {
+    throw new Error(
+      'No focused text field was found. Tap the text field first, or use method "type". If the field is focused, idb_companion may be too old to find it (1.1.8 ignores `--api axbridge`; upgrade with `brew upgrade idb-companion`).',
+    );
+  }
+  return field;
+}
+
+/**
+ * Empties the focused field. Shortcuts are sent by US key position, so Cmd+A
+ * doesn't select all on e.g. AZERTY; Cmd+Down and Cmd+Right (end of text) and
+ * Delete are in the same place on every layout.
+ */
+async function clearFocusedField(udid: string) {
+  let value = (await readFocusedField(udid)).AXValue ?? "";
+  if (!value) return;
+  for (const key of [HID_KEYCODE_DOWN_ARROW, HID_KEYCODE_RIGHT_ARROW])
+    await idbForPaste("ui", "key", "--udid", udid, "--command", "--", key);
+  // Some of these fast key presses can be dropped, so repeat while what is
+  // left is a shorter prefix of the text (rather than e.g. the placeholder).
+  for (let round = 0; round < 5; round++) {
+    await idb(
+      "ui",
+      "key-sequence",
+      "--udid",
+      udid,
+      "--",
+      ...Array<string>(value.length).fill(HID_KEYCODE_DELETE),
+    );
+    const left = (await readFocusedField(udid)).AXValue ?? "";
+    if (!left) return;
+    const shrank = left !== value && value.startsWith(left);
+    value = left;
+    if (!shrank) break;
+  }
+  // An empty field reports its placeholder as its value, so check that a
+  // typed space becomes the whole value, then delete it.
+  await idb("ui", "key", "--udid", udid, "--", HID_KEYCODE_SPACE);
+  const probe = (await readFocusedField(udid)).AXValue ?? "";
+  if (probe !== value)
+    await idb("ui", "key", "--udid", udid, "--", HID_KEYCODE_DELETE);
+  if (probe !== " ") {
+    throw new Error(
+      `The focused text field could not be cleared, so nothing was pasted. It still contains ${JSON.stringify(value.slice(0, 200))}.`,
+    );
+  }
+}
+
+/**
+ * iOS asks "<App> would like to paste from CoreSimulatorBridge" when an app
+ * reads a pasteboard written by simctl. Returns undefined when no prompt is
+ * shown, null when the prompt is shown but its allow button isn't recognized.
+ */
+function findAllowPasteButton(
+  elements: AXElement[],
+): AXElement | null | undefined {
+  const prompt = elements.find(
+    (e) =>
+      e.type === "StaticText" && e.AXLabel?.includes("CoreSimulatorBridge"),
+  );
+  if (!prompt?.frame) return undefined;
+  const promptY = prompt.frame.y;
+  const buttons = elements.filter(
+    (e) =>
+      e.type === "Button" &&
+      e.AXLabel &&
+      e.frame &&
+      e.frame.y > promptY &&
+      e.frame.y < promptY + 300,
+  );
+  return buttons.find((b) => ALLOW_PASTE_LABELS.includes(b.AXLabel!)) ?? null;
+}
+
+/** The paste may still happen later, so the clipboard must keep the text. */
+class PastePendingError extends Error {}
+
+/** Waits until the pasted text shows up in the focused field. */
+async function confirmPaste(
+  udid: string,
+  before: string,
+  text: string,
+  warnings: string[],
+  exact: boolean,
+) {
+  // An empty field reports its placeholder as its value.
+  const landed = (after: string) =>
+    after === text ||
+    (!exact &&
+      [...Array(before.length + 1).keys()].some(
+        (i) => after === before.slice(0, i) + text + before.slice(i),
+      ));
+  let unchangedReads = 0;
+  let taps = 0;
+  let lastTap = 0;
+  let deadline = Date.now() + PASTE_TIMEOUT_MS;
+  // The read started after the deadline is the final one.
+  for (let finalRead = false; !finalRead;) {
+    finalRead = Date.now() >= deadline;
+    const elements = await describeForTyping(udid);
+    const allow = findAllowPasteButton(elements);
+    if (allow === null) {
+      throw new PastePendingError(
+        "iOS is asking whether the app may paste from CoreSimulatorBridge, but its allow button wasn't recognized. Tap it to finish pasting (the simulator clipboard still holds the text) instead of calling ui_type again.",
+      );
+    }
+    // A tap made while the prompt is still appearing is sometimes ignored and
+    // the prompt stays up; after a tap that works, it is gone by the next read.
+    if (allow?.frame) {
+      if (Date.now() - lastTap < 1000) continue;
+      if (taps === 3 || finalRead) {
+        throw new PastePendingError(
+          `iOS is still asking whether the app may paste from CoreSimulatorBridge after ${taps} taps on "${allow.AXLabel}". Tap it to finish pasting (the simulator clipboard still holds the text) instead of calling ui_type again.`,
+        );
+      }
+      await idb(
+        "ui",
+        "tap",
+        "--udid",
+        udid,
+        "--",
+        String(Math.round(allow.frame.x + allow.frame.width / 2)),
+        String(Math.round(allow.frame.y + allow.frame.height / 2)),
+      );
+      taps++;
+      lastTap = Date.now();
+      deadline = lastTap + PASTE_TIMEOUT_MS;
+      continue;
+    }
+    const field = focusedField(elements);
+    if (!field) continue;
+    const after = field.AXValue ?? "";
+    if (after !== before) {
+      if (!landed(after)) {
+        warnings.push(
+          `The field changed but doesn't contain exactly the typed text; the app may have reformatted it. Field value: ${JSON.stringify(after.slice(0, 200))}`,
+        );
+      }
+      return;
+    }
+    // Text identical to the placeholder (or to the field's whole content)
+    // looks the same whether or not the paste landed.
+    if (landed(after) && ++unchangedReads >= 2) {
+      warnings.push(
+        "The field already showed exactly this text (probably as its placeholder), so the paste could not be verified.",
+      );
+      return;
+    }
+  }
+  throw new Error(
+    "Pasting with Cmd+V did not change the focused text field. The field may not allow pasting.",
+  );
+}
+
+/**
+ * Pastes one line through the simulator pasteboard and a Cmd+V hardware key
+ * press, which unlike `idb ui text` (US-layout key positions) works with any
+ * keyboard layout. Restores the previous pasteboard text afterwards.
+ */
+async function pasteLine(
+  udid: string,
+  text: string,
+  warnings: string[],
+  exact: boolean,
+) {
+  const [{ stdout: previous }, field] = await Promise.all([
+    // Not `run`, which trims: the pasteboard is restored byte for byte.
+    execFileAsync("xcrun", ["simctl", "pbpaste", udid], {
+      env: { ...process.env, ...SIMCTL_PASTEBOARD_ENV },
+    }),
+    readFocusedField(udid),
+  ]);
+  await run("xcrun", ["simctl", "pbcopy", udid], {
+    input: text,
+    env: SIMCTL_PASTEBOARD_ENV,
+  });
+  let restoreClipboard = true;
+  try {
+    await idbForPaste(
+      "ui",
+      "key",
+      "--udid",
+      udid,
+      "--command",
+      "--",
+      HID_KEYCODE_V,
+    );
+    await confirmPaste(udid, field.AXValue ?? "", text, warnings, exact);
+  } catch (error) {
+    // Restoring now could let a late Allow tap paste the old clipboard.
+    if (error instanceof PastePendingError) restoreClipboard = false;
+    throw error;
+  } finally {
+    if (restoreClipboard)
+      await run("xcrun", ["simctl", "pbcopy", udid], {
+        input: previous,
+        env: SIMCTL_PASTEBOARD_ENV,
+      }).catch((error) =>
+        warnings.push(
+          `The simulator clipboard could not be restored and now contains the typed text: ${toError(error).message}`,
+        ),
+      );
+  }
+}
+
+/** Pastes text into the focused field; each "\n" presses Return between lines. */
+async function pasteText(
+  udid: string,
+  text: string,
+  replace: boolean,
+): Promise<string[]> {
+  const warnings: string[] = [];
+  try {
+    if (replace) await clearFocusedField(udid);
+    for (const [i, line] of text.split(/\r?\n/).entries()) {
+      if (i > 0)
+        await idb("ui", "key", "--udid", udid, "--", HID_KEYCODE_RETURN);
+      if (line) await pasteLine(udid, line, warnings, replace && i === 0);
+    }
+  } catch (error) {
+    const failure = toError(error);
+    if (warnings.length > 0)
+      failure.message += ` Warning: ${warnings.join(" ")}`;
+    throw failure;
+  }
+  return [...new Set(warnings)];
+}
+
 if (!isToolFiltered("ui_type")) {
   server.registerTool(
     "ui_type",
     {
       description: "Input text into the iOS Simulator",
-      inputSchema: z.object({
-        udid: z
-          .string()
-          .regex(UDID_REGEX)
-          .optional()
-          .describe(
-            "Udid of target, can also be set with the IDB_UDID env var",
-          ),
-        text: z
-          .string()
-          .max(500)
-          .regex(/^[\x20-\x7E]+$/)
-          .describe("Text to input"),
-      }),
+      inputSchema: z
+        .object({
+          udid: z
+            .string()
+            .regex(UDID_REGEX)
+            .optional()
+            .describe(
+              "Udid of target, can also be set with the IDB_UDID env var",
+            ),
+          text: z.string().max(500).describe("Text to input"),
+          method: z
+            .enum(["type", "paste"])
+            .default("type")
+            .describe(
+              '"type" (default) presses keys as on a US keyboard and accepts printable ASCII only. Use "paste" when the simulator keyboard layout is not US (e.g. French AZERTY, where "type" produces wrong characters) or the text has non-ASCII characters: it pastes through the simulator clipboard into the focused text field (tap it first), takes about 2-3 s, and presses Return for each "\\n"',
+            ),
+          replace: z
+            .boolean()
+            .default(false)
+            .describe(
+              'With method "paste": set replace: true to clear the focused field first, e.g. after a "type" attempt produced wrong characters. Works with any keyboard layout',
+            ),
+        })
+        .superRefine(({ text, method, replace }, ctx) => {
+          if (replace && method === "type") {
+            ctx.addIssue({
+              code: "custom",
+              path: ["replace"],
+              message: 'replace only works with method "paste"',
+            });
+          }
+          if (method === "type" ? !/^[\x20-\x7E]+$/.test(text) : !text) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["text"],
+              message:
+                method === "type"
+                  ? 'Invalid string: must match pattern /^[\\x20-\\x7E]+$/. For non-ASCII text or non-US keyboard layouts, use method "paste".'
+                  : "Text must not be empty",
+            });
+          }
+        }),
       annotations: {
         title: "UI Type",
         readOnlyHint: false,
         openWorldHint: true,
       },
     },
-    async ({ udid, text }) => {
+    async ({ udid, text, method, replace }) => {
       try {
         const actualUdid = await getBootedDeviceId(udid);
+
+        if (method === "paste") {
+          const warnings = await pasteText(actualUdid, text, replace);
+          return {
+            isError: false,
+            content: [
+              {
+                type: "text",
+                text: [
+                  "Typed successfully",
+                  ...warnings.map((w) => `Warning: ${w}`),
+                ].join("\n"),
+              },
+            ],
+          };
+        }
 
         const { stderr } = await idb(
           "ui",

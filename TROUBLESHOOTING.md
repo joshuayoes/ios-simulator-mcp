@@ -11,29 +11,30 @@ If you encounter errors or issues using this MCP server, try the following troub
 
 The installation section in [IDB](https://fbidb.io/docs/installation/) is a little out of date. Since [python environments are famously borked](https://xkcd.com/1987/), here are some ways to install that are hopefully compatible with your existing python install.
 
-### Using Homebrew + pip
+IDB has two parts: `idb_companion` (a native binary, installed with Homebrew) and the `fb-idb` Python client (the `idb` command).
 
-1. Install [Homebrew](https://brew.sh/) if you don't have it:
+### Using Homebrew + uv (recommended)
+
+1. Install the companion. Homebrew 7 refuses formulae from third-party taps until you trust them, hence the `brew trust` step:
    ```sh
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+   brew tap facebook/fb
+   brew trust --formula facebook/fb/idb-companion
+   brew install idb-companion
    ```
-2. Install Python (if not already installed):
+   If you already have it, run `brew upgrade idb-companion`. Old companions (e.g. 1.1.8) break `ui_type` with `method: "paste"`.
+2. Install the client with [uv](https://docs.astral.sh/uv/), which keeps it in its own environment:
    ```sh
-   brew install python
+   brew install uv
+   uv tool install --python 3.12 fb-idb
    ```
-3. Install idb using pip:
+3. Make sure `~/.local/bin` is in your PATH (`uv tool update-shell` adds it), then verify:
    ```sh
-   pip3 install --user fb-idb
+   idb list-targets
    ```
-4. Ensure your user base binary directory is in your PATH (often `~/.local/bin`):
-   ```sh
-   export PATH="$HOME/.local/bin:$PATH"
-   # Add the above line to your ~/.zshrc or ~/.bash_profile for persistence
-   ```
-5. Verify installation:
-   ```sh
-   idb -h
-   ```
+
+### Why not Homebrew + pip?
+
+Homebrew's own Python refuses `pip install --user fb-idb` with `error: externally-managed-environment` (PEP 668). Use the uv steps above, or pip with a Python you manage yourself (asdf below). Either way, install `idb_companion` with Homebrew as in step 1 above.
 
 ### Using asdf (Python version manager)
 
@@ -70,7 +71,7 @@ The installation section in [IDB](https://fbidb.io/docs/installation/) is a litt
 - Run `xcrun simctl list devices` to verify a simulator is booted.
 
 ### "idb: command not found" or IDB errors
-- Follow the install steps above for Homebrew + pip or asdf.
+- Follow the install steps above (Homebrew + uv, or asdf).
 - Ensure `idb` is in your PATH: try running `idb --version` in your terminal.
 
 ### Permission or File Errors

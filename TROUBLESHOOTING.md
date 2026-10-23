@@ -32,9 +32,7 @@ IDB has two parts: `idb_companion` (a native binary, installed with Homebrew) an
    idb list-targets
    ```
 
-### Why not Homebrew + pip?
-
-Homebrew's own Python refuses `pip install --user fb-idb` with `error: externally-managed-environment` (PEP 668). Use the uv steps above, or pip with a Python you manage yourself (asdf below). Either way, install `idb_companion` with Homebrew as in step 1 above.
+Homebrew's Python refuses `pip install --user fb-idb` with `error: externally-managed-environment` (PEP 668), so use uv as above or pip with a Python you manage yourself (asdf below).
 
 ### Using asdf (Python version manager)
 

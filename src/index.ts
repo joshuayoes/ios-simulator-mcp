@@ -732,7 +732,7 @@ if (!isToolFiltered("ui_type")) {
             .enum(["type", "paste"])
             .default("type")
             .describe(
-              '"type" (default): presses keys as on a US keyboard; printable ASCII only. "paste": use when the keyboard layout is not US (e.g. AZERTY, where "type" types wrong characters) or the text is non-ASCII; pastes into the focused field (tap it first), ~3 s',
+              '"type" (default): presses keys as on a US keyboard; printable ASCII only. "paste": use when the keyboard layout is not US (e.g. AZERTY, where "type" types wrong characters) or the text is non-ASCII; pastes into the focused field (tap it first), ~2-11 s',
             ),
           replace: z
             .boolean()

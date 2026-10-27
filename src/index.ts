@@ -445,9 +445,6 @@ const SIMCTL_PASTEBOARD_ENV = { LC_ALL: "en_US.UTF-8" };
 /** Button labels of the "Allow Paste" choice in iOS's paste permission prompt. */
 const ALLOW_PASTE_LABELS = ["Allow Paste", "Autoriser le collage"];
 
-const pastePendingHint = (button: string) =>
-  ` Tap ${button} to finish pasting (the clipboard still holds the text) instead of calling ui_type again.`;
-
 /** Runs an idb command that needs a recent fb-idb, with an upgrade hint for older ones. */
 async function idbForPaste(...args: string[]) {
   try {
@@ -462,6 +459,19 @@ async function idbForPaste(...args: string[]) {
     throw error;
   }
 }
+
+/** Presses a key; modifiers (e.g. "--command") need a recent fb-idb. */
+async function pressKey(udid: string, code: string, ...modifiers: string[]) {
+  const args = ["ui", "key", "--udid", udid, ...modifiers, "--", code];
+  return modifiers.length ? idbForPaste(...args) : idb(...args);
+}
+
+/** Sets the simulator clipboard text. */
+const pbcopy = (udid: string, text: string) =>
+  run("xcrun", ["simctl", "pbcopy", udid], {
+    input: text,
+    env: SIMCTL_PASTEBOARD_ENV,
+  });
 
 /** axbridge sees fields the default reader misses (e.g. web content); IsEditing marks focus. */
 async function describeForTyping(udid: string): Promise<AXElement[]> {
@@ -513,36 +523,13 @@ async function clearFocusedField(udid: string) {
   };
   let value = (await readFocusedField(udid)).AXValue ?? "";
   if (!value) return;
-  await idbForPaste(
-    "ui",
-    "key",
-    "--udid",
-    udid,
-    "--command",
-    "--",
-    HID_KEYCODE_DOWN_ARROW,
-  );
+  await pressKey(udid, HID_KEYCODE_DOWN_ARROW, "--command");
   // Selecting back to the start lets one Delete clear even long text.
-  await idbForPaste(
-    "ui",
-    "key",
-    "--udid",
-    udid,
-    "--shift",
-    "--command",
-    "--",
-    HID_KEYCODE_UP_ARROW,
-  );
+  await pressKey(udid, HID_KEYCODE_UP_ARROW, "--shift", "--command");
   // Delete presses can be dropped: repeat while the value shrinks to a prefix (not a placeholder).
   for (let round = 0, deletes = 1; round < 5; round++) {
-    await idb(
-      "ui",
-      "key-sequence",
-      "--udid",
-      udid,
-      "--",
-      ...Array<string>(deletes).fill(HID_KEYCODE_DELETE),
-    );
+    const presses = Array<string>(deletes).fill(HID_KEYCODE_DELETE);
+    await idb("ui", "key-sequence", "--udid", udid, "--", ...presses);
     const left = await settledValue(deletes);
     if (!left) return;
     const shrank = left !== value && value.startsWith(left);
@@ -551,10 +538,10 @@ async function clearFocusedField(udid: string) {
     deletes = value.length;
   }
   // An empty field reports its placeholder, so check that a typed space becomes the whole value.
-  await idb("ui", "key", "--udid", udid, "--", HID_KEYCODE_SPACE);
+  await pressKey(udid, HID_KEYCODE_SPACE);
   const probe = await settledValue(1);
   if (probe !== value) {
-    await idb("ui", "key", "--udid", udid, "--", HID_KEYCODE_DELETE);
+    await pressKey(udid, HID_KEYCODE_DELETE);
     // Wait for the Delete, so the paste doesn't take the field's change for its own.
     await settledValue(1);
   }
@@ -606,6 +593,11 @@ function findAllowPasteButton(
 /** The paste may still happen later, so the clipboard must keep the text. */
 class PastePendingError extends Error {}
 
+const pastePending = (status: string, button: string) =>
+  new PastePendingError(
+    `iOS asks to allow pasting from CoreSimulatorBridge${status}. Tap ${button} to finish pasting (the clipboard still holds the text) instead of calling ui_type again.`,
+  );
+
 /** Waits until the pasted text shows up in the focused field, tapping "Allow Paste" if asked. */
 async function confirmPaste(
   udid: string,
@@ -623,31 +615,21 @@ async function confirmPaste(
     const elements = await describeForTyping(udid);
     const allow = findAllowPasteButton(elements);
     if (allow === null) {
-      throw new PastePendingError(
-        "iOS asks to allow pasting from CoreSimulatorBridge, but its allow button wasn't recognized." +
-          pastePendingHint("it"),
-      );
+      throw pastePending(", but its allow button wasn't recognized", "it");
     }
     // A tap made while the prompt is still appearing is sometimes ignored.
     if (allow?.frame) {
       if (Date.now() - lastTap < 1000) continue;
+      const button = `"${allow.AXLabel}"`;
       if (taps === 3 || finalRead) {
-        throw new PastePendingError(
-          (taps === 0
-            ? "iOS asks to allow pasting from CoreSimulatorBridge."
-            : `iOS still asks to allow pasting from CoreSimulatorBridge after ${taps} taps on "${allow.AXLabel}".`) +
-            pastePendingHint(`"${allow.AXLabel}"`),
-        );
+        const tapped = taps
+          ? ` (still showing after ${taps} tap${taps > 1 ? "s" : ""} on ${button})`
+          : "";
+        throw pastePending(tapped, button);
       }
-      await idb(
-        "ui",
-        "tap",
-        "--udid",
-        udid,
-        "--",
-        String(Math.round(allow.frame.x + allow.frame.width / 2)),
-        String(Math.round(allow.frame.y + allow.frame.height / 2)),
-      );
+      const f = allow.frame;
+      const center = [f.x + f.width / 2, f.y + f.height / 2].map(Math.round);
+      await idb("ui", "tap", "--udid", udid, "--", ...center.map(String));
       taps++;
       lastTap = Date.now();
       deadline = lastTap + PASTE_TIMEOUT_MS;
@@ -705,21 +687,10 @@ async function pasteText(
       ["simctl", "pbpaste", udid],
       { env: { ...process.env, ...SIMCTL_PASTEBOARD_ENV } },
     );
-    await run("xcrun", ["simctl", "pbcopy", udid], {
-      input: text,
-      env: SIMCTL_PASTEBOARD_ENV,
-    });
+    await pbcopy(udid, text);
     let restoreClipboard = true;
     try {
-      await idbForPaste(
-        "ui",
-        "key",
-        "--udid",
-        udid,
-        "--command",
-        "--",
-        HID_KEYCODE_V,
-      );
+      await pressKey(udid, HID_KEYCODE_V, "--command");
       await confirmPaste(udid, field.AXValue ?? "", text, warnings, replace);
     } catch (error) {
       // Restoring now could let a late Allow tap paste the old clipboard.
@@ -727,10 +698,7 @@ async function pasteText(
       throw error;
     } finally {
       if (restoreClipboard)
-        await run("xcrun", ["simctl", "pbcopy", udid], {
-          input: previous,
-          env: SIMCTL_PASTEBOARD_ENV,
-        }).catch((error) =>
+        await pbcopy(udid, previous).catch((error) =>
           warnings.push(
             `Could not restore the simulator clipboard, which now holds the typed text: ${toError(error).message}`,
           ),

@@ -21,7 +21,7 @@ IDB has two parts: `idb_companion` (a native binary, installed with Homebrew) an
    brew trust --formula facebook/fb/idb-companion
    brew install idb-companion
    ```
-   If you already have it, run `brew upgrade idb-companion`. Old companions (e.g. 1.1.8) break `ui_type` with `method: "paste"`.
+   If you already have it, run `brew upgrade idb-companion`, then `idb kill` so the old companion process stops serving your simulators. Old companions (e.g. 1.1.8) break `ui_type` with `method: "paste"`.
 2. Install the client with [uv](https://docs.astral.sh/uv/), which keeps it in its own environment:
    ```sh
    brew install uv
@@ -70,7 +70,7 @@ Homebrew's Python refuses `pip install --user fb-idb` with `error: externally-ma
 
 ### "idb: command not found" or IDB errors
 - Follow the install steps above (Homebrew + uv, or asdf).
-- Ensure `idb` is in your PATH: try running `idb --version` in your terminal.
+- Ensure `idb` is in your PATH: try running `idb list-targets` in your terminal. If your MCP client doesn't see `~/.local/bin` (`spawn idb ENOENT`), set `IOS_SIMULATOR_MCP_IDB_PATH` to the full path of `idb`.
 
 ### Permission or File Errors
 - Ensure you have permission to write to the output path (e.g., for screenshots or recordings).

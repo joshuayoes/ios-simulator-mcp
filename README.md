@@ -86,7 +86,7 @@ This project has been featured and mentioned in various publications and resourc
   udid?: string;
   /**
    * Text to input
-   * Format: ASCII printable characters only (method "type")
+   * Format: up to 500 characters; ASCII printable characters only (method "type")
    */
   text: string;
   /**
@@ -100,7 +100,7 @@ This project has been featured and mentioned in various publications and resourc
 }
 ```
 
-`method: "type"` (the default) presses keys as on a US keyboard, so on other layouts such as French AZERTY it types the wrong characters (`mobiletest@example.com` becomes `,obiletest2exq,ple:co,`). Use `method: "paste"` for non-US keyboard layouts or non-ASCII text; it takes about 2–3 s per call instead of about 230 ms. Tap the text field first: the text is pasted into the focused field through the simulator pasteboard, iOS's "Allow Paste" prompt is tapped for you, and the field is read back to confirm. The previous pasteboard text is restored afterwards, unless the prompt is still on screen when the call gives up; then the text stays on the pasteboard and the error tells you to tap "Allow Paste" instead of retrying. `replace: true` clears the field first (e.g. after `"type"` produced wrong characters). Paste mode needs fb-idb 1.5.1+ and a recent idb_companion (1.1.8 lacks `--api axbridge`, so every paste fails with "No focused text field found"; `brew upgrade idb-companion`).
+`method: "type"` (the default) presses keys as on a US keyboard, so on other layouts such as French AZERTY it types the wrong characters (`mobiletest@example.com` becomes `,obiletest2exq,ple:co,`). Use `method: "paste"` for non-US keyboard layouts or non-ASCII text; it takes about 3 s per call (about 5 s with `replace: true`, longer on the first call or a busy screen) instead of about 230 ms. Tap the text field first: the text is pasted into the focused field through the simulator pasteboard, iOS's "Allow Paste" prompt is tapped for you, and the field is read back to confirm (for secure fields, only the length). The previous pasteboard text is restored afterwards (non-text content such as an image is not), unless the prompt is still on screen when the call gives up; then the text stays on the pasteboard and the error tells you to tap the allow button instead of retrying. `replace: true` clears the field first (e.g. after `"type"` produced wrong characters). Paste mode rejects empty text and newlines. It needs fb-idb 1.5.1+ and a recent idb_companion (1.1.8 lacks `--api axbridge`, so every paste fails with "No focused text field found"; `brew upgrade idb-companion`, then `idb kill`).
 
 ### `ui_swipe`
 

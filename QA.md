@@ -38,10 +38,10 @@ and show the run. Anything else is a finding — file it.
 
 ## Non-US keyboard scenario (ui_type method "paste")
 
-1. Add a French AZERTY keyboard: `xcrun simctl spawn <udid> defaults write -g AppleKeyboards -array "en_US@sw=QWERTY;hw=Automatic" "emoji@sw=Emoji" "fr_FR@sw=AZERTY;hw=French"`.
-2. In a text field (e.g. Settings search), tap the globe key until `xcrun simctl spawn <udid> defaults read com.apple.keyboard.preferences KeyboardLastUsed` shows `fr_FR@sw=AZERTY;hw=French`.
+1. With the simulator booted and Simulator.app showing it (booting or reconnecting resets the keyboard list), add a French AZERTY keyboard: `xcrun simctl spawn <udid> defaults write -g AppleKeyboards -array "en_US@sw=QWERTY;hw=Automatic" "emoji@sw=Emoji" "fr_FR@sw=AZERTY;hw=French"`.
+2. In a text field (e.g. Settings search), tap the globe key until `xcrun simctl spawn <udid> defaults read com.apple.keyboard.preferences KeyboardLastUsed` shows `fr_FR@sw=AZERTY;hw=French` (dismiss any keyboard intro sheet first), then terminate and relaunch the app so it picks up the layout.
 3. Call `ui_type` with `text: "mobiletest@example.com"` and the default method; confirm via `ui_describe_all` that the field shows the wrong characters (`,obiletest2exq,ple:co,`).
-4. Call `ui_type` again with `method: "paste"` and `replace: true`; confirm the field contains exactly `mobiletest@example.com`. Paste `"café déjà vu"` into an empty field the same way (without `replace`).
+4. Call `ui_type` again with `method: "paste"` and `replace: true`; confirm the field contains exactly `mobiletest@example.com`. Clear the field (e.g. its clear button) and paste `"café déjà vu"` the same way without `replace`.
 5. Open Safari, tap the address bar, and call `ui_type` with `text: "http://localhost:8081"` and `method: "paste"`; confirm the "Allow Paste" prompt is accepted automatically and the address bar contains exactly that text.
 6. Restore the keyboards: `xcrun simctl spawn <udid> defaults write -g AppleKeyboards -array "en_US@sw=QWERTY;hw=Automatic" "emoji@sw=Emoji"`.
 

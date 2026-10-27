@@ -434,8 +434,8 @@ type AXElement = {
 const HID_KEYCODE_V = "25";
 const HID_KEYCODE_DELETE = "42";
 const HID_KEYCODE_SPACE = "44";
-const HID_KEYCODE_RIGHT_ARROW = "79";
 const HID_KEYCODE_DOWN_ARROW = "81";
+const HID_KEYCODE_UP_ARROW = "82";
 
 const PASTE_TIMEOUT_MS = 3000;
 
@@ -445,8 +445,8 @@ const SIMCTL_PASTEBOARD_ENV = { LC_ALL: "en_US.UTF-8" };
 /** Button labels of the "Allow Paste" choice in iOS's paste permission prompt. */
 const ALLOW_PASTE_LABELS = ["Allow Paste", "Autoriser le collage"];
 
-const PASTE_PENDING_HINT =
-  " Tap it to finish pasting (the clipboard still holds the text) instead of calling ui_type again.";
+const pastePendingHint = (button: string) =>
+  ` Tap ${button} to finish pasting (the clipboard still holds the text) instead of calling ui_type again.`;
 
 /** Runs an idb command that needs a recent fb-idb, with an upgrade hint for older ones. */
 async function idbForPaste(...args: string[]) {
@@ -456,7 +456,7 @@ async function idbForPaste(...args: string[]) {
     const { message } = toError(error);
     if (/unrecognized arguments|invalid choice/.test(message)) {
       throw new Error(
-        `idb is too old for method "paste": upgrade to fb-idb 1.5.1+ (\`uv tool upgrade fb-idb\`) or use method "type". ${message}`,
+        `idb is too old for method "paste": upgrade to fb-idb 1.5.1+ (\`uv tool install --python 3.12 fb-idb@latest\`) or use method "type". ${message}`,
       );
     }
     throw error;
@@ -483,44 +483,83 @@ function focusedField(elements: AXElement[]): AXElement | undefined {
   return elements.find((e) => e.traits?.includes("IsEditing"));
 }
 
+/** Secure text fields report one bullet per character instead of their text. */
+function isSecureValue(value: string): boolean {
+  return /^•+$/.test(value);
+}
+
 async function readFocusedField(udid: string): Promise<AXElement> {
   const field = focusedField(await describeForTyping(udid));
   if (!field) {
     throw new Error(
-      'No focused text field found: tap it first, or use method "type". If it is focused, idb_companion is too old (`brew upgrade idb-companion`).',
+      'No focused text field found: tap it first, or use method "type". If it is focused, idb_companion is too old (`brew upgrade idb-companion`, then `idb kill` so the old companion stops serving the simulator).',
     );
   }
   return field;
 }
 
-/** Clears the focused field with Cmd+Down/Right and Delete, which (unlike Cmd+A) work on any layout. */
+/** Clears the focused field with Cmd+Down, Shift+Cmd+Up and Delete, which (unlike Cmd+A) work on any layout. */
 async function clearFocusedField(udid: string) {
+  // idb returns before the app handles the keys (WebKit takes seconds for long text), so wait
+  // until two reads agree.
+  const settledValue = async (keys: number) => {
+    const deadline = Date.now() + Math.min(1000 + keys * 50, 5000);
+    let value = (await readFocusedField(udid)).AXValue ?? "";
+    for (;;) {
+      const next = (await readFocusedField(udid)).AXValue ?? "";
+      if (next === value || Date.now() >= deadline) return next;
+      value = next;
+    }
+  };
   let value = (await readFocusedField(udid)).AXValue ?? "";
   if (!value) return;
-  for (const key of [HID_KEYCODE_DOWN_ARROW, HID_KEYCODE_RIGHT_ARROW])
-    await idbForPaste("ui", "key", "--udid", udid, "--command", "--", key);
+  await idbForPaste(
+    "ui",
+    "key",
+    "--udid",
+    udid,
+    "--command",
+    "--",
+    HID_KEYCODE_DOWN_ARROW,
+  );
+  // Selecting back to the start lets one Delete clear even long text.
+  await idbForPaste(
+    "ui",
+    "key",
+    "--udid",
+    udid,
+    "--shift",
+    "--command",
+    "--",
+    HID_KEYCODE_UP_ARROW,
+  );
   // Delete presses can be dropped: repeat while the value shrinks to a prefix (not a placeholder).
-  for (let round = 0; round < 5; round++) {
+  for (let round = 0, deletes = 1; round < 5; round++) {
     await idb(
       "ui",
       "key-sequence",
       "--udid",
       udid,
       "--",
-      ...Array<string>(value.length).fill(HID_KEYCODE_DELETE),
+      ...Array<string>(deletes).fill(HID_KEYCODE_DELETE),
     );
-    const left = (await readFocusedField(udid)).AXValue ?? "";
+    const left = await settledValue(deletes);
     if (!left) return;
     const shrank = left !== value && value.startsWith(left);
     value = left;
     if (!shrank) break;
+    deletes = value.length;
   }
   // An empty field reports its placeholder, so check that a typed space becomes the whole value.
   await idb("ui", "key", "--udid", udid, "--", HID_KEYCODE_SPACE);
-  const probe = (await readFocusedField(udid)).AXValue ?? "";
-  if (probe !== value)
+  const probe = await settledValue(1);
+  if (probe !== value) {
     await idb("ui", "key", "--udid", udid, "--", HID_KEYCODE_DELETE);
-  if (probe !== " ") {
+    // Wait for the Delete, so the paste doesn't take the field's change for its own.
+    await settledValue(1);
+  }
+  // Secure fields show the space as a single bullet.
+  if (probe !== " " && !(isSecureValue(probe) && probe.length === 1)) {
     throw new Error(
       `Could not clear the focused field, so nothing was pasted. It contains ${JSON.stringify(value.slice(0, 200))}.`,
     );
@@ -548,7 +587,20 @@ function findAllowPasteButton(
       e.frame.y > promptY &&
       e.frame.y < promptY + 300,
   );
-  return buttons.find((b) => ALLOW_PASTE_LABELS.includes(b.AXLabel!)) ?? null;
+  const known = buttons.find((b) => ALLOW_PASTE_LABELS.includes(b.AXLabel!));
+  if (known) return known;
+  if (buttons.length !== 2) return null;
+  // Button order differs between iOS versions, but the deny label is the allow
+  // label plus a negation ("Einsetzen nicht erlauben"), so only trust that shape.
+  const [allow, deny] = [...buttons].sort(
+    (a, b) => a.AXLabel!.length - b.AXLabel!.length,
+  );
+  const allowWords = allow.AXLabel!.toLowerCase().split(/\s+/);
+  const denyLabel = deny.AXLabel!.toLowerCase();
+  const isNegation = allowWords.every((word) => denyLabel.includes(word));
+  return allow.AXLabel!.length < deny.AXLabel!.length && isNegation
+    ? allow
+    : null;
 }
 
 /** The paste may still happen later, so the clipboard must keep the text. */
@@ -573,7 +625,7 @@ async function confirmPaste(
     if (allow === null) {
       throw new PastePendingError(
         "iOS asks to allow pasting from CoreSimulatorBridge, but its allow button wasn't recognized." +
-          PASTE_PENDING_HINT,
+          pastePendingHint("it"),
       );
     }
     // A tap made while the prompt is still appearing is sometimes ignored.
@@ -581,8 +633,10 @@ async function confirmPaste(
       if (Date.now() - lastTap < 1000) continue;
       if (taps === 3 || finalRead) {
         throw new PastePendingError(
-          `iOS still asks to allow pasting from CoreSimulatorBridge after ${taps} taps on "${allow.AXLabel}".` +
-            PASTE_PENDING_HINT,
+          (taps === 0
+            ? "iOS asks to allow pasting from CoreSimulatorBridge."
+            : `iOS still asks to allow pasting from CoreSimulatorBridge after ${taps} taps on "${allow.AXLabel}".`) +
+            pastePendingHint(`"${allow.AXLabel}"`),
         );
       }
       await idb(
@@ -603,7 +657,17 @@ async function confirmPaste(
     if (!field) continue;
     const after = field.AXValue ?? "";
     if (after === before) continue;
-    if (exact ? after !== text : !after.includes(text)) {
+    if (isSecureValue(after)) {
+      // An empty field reports its placeholder, so it had no bullets yet; a refocused
+      // secure field may also replace its content instead of appending.
+      const added = after.length - (isSecureValue(before) ? before.length : 0);
+      const expected = [...text].length;
+      if (added !== expected && after.length !== expected) {
+        warnings.push(
+          `The secure field gained ${added} characters instead of ${expected} (the app may have filtered them).`,
+        );
+      }
+    } else if (exact ? after !== text : !after.includes(text)) {
       warnings.push(
         `The field changed but doesn't contain exactly the typed text (the app may have reformatted it): ${JSON.stringify(after.slice(0, 200))}`,
       );
@@ -611,7 +675,9 @@ async function confirmPaste(
     return;
   }
   throw new Error(
-    "Cmd+V did not change the focused text field. The field may not allow pasting.",
+    text === before
+      ? "Cmd+V did not visibly change the focused text field, but the text equals its placeholder, so it may have been pasted: check the field before retrying."
+      : "Cmd+V did not change the focused text field. The field may not allow pasting.",
   );
 }
 
@@ -626,14 +692,19 @@ async function pasteText(
 ): Promise<string[]> {
   const warnings: string[] = [];
   try {
-    if (replace) await clearFocusedField(udid);
-    const [{ stdout: previous }, field] = await Promise.all([
-      // Not `run`, which trims: the pasteboard is restored byte for byte.
-      execFileAsync("xcrun", ["simctl", "pbpaste", udid], {
-        env: { ...process.env, ...SIMCTL_PASTEBOARD_ENV },
-      }),
-      readFocusedField(udid),
-    ]);
+    let field = await readFocusedField(udid);
+    if (field.traits?.includes("ReadOnly"))
+      throw new Error("The focused field is read-only, so nothing was pasted.");
+    if (replace) {
+      await clearFocusedField(udid);
+      field = await readFocusedField(udid);
+    }
+    // Not `run`, which trims: the pasteboard is restored byte for byte.
+    const { stdout: previous } = await execFileAsync(
+      "xcrun",
+      ["simctl", "pbpaste", udid],
+      { env: { ...process.env, ...SIMCTL_PASTEBOARD_ENV } },
+    );
     await run("xcrun", ["simctl", "pbcopy", udid], {
       input: text,
       env: SIMCTL_PASTEBOARD_ENV,
@@ -693,7 +764,7 @@ if (!isToolFiltered("ui_type")) {
             .enum(["type", "paste"])
             .default("type")
             .describe(
-              '"type" (default): presses keys as on a US keyboard; printable ASCII only. "paste": use when the keyboard layout is not US (e.g. AZERTY, where "type" types wrong characters) or the text is non-ASCII; pastes into the focused field (tap it first), ~2-3 s',
+              '"type" (default): presses keys as on a US keyboard; printable ASCII only. "paste": use when the keyboard layout is not US (e.g. AZERTY, where "type" types wrong characters) or the text is non-ASCII; pastes into the focused field (tap it first), ~3 s',
             ),
           replace: z
             .boolean()

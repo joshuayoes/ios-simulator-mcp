@@ -86,11 +86,21 @@ This project has been featured and mentioned in various publications and resourc
   udid?: string;
   /**
    * Text to input
-   * Format: ASCII printable characters only
+   * Format: up to 500 characters; ASCII printable characters only (method "type")
    */
   text: string;
+  /**
+   * "type" (default) or "paste"
+   */
+  method?: "type" | "paste";
+  /**
+   * Method "paste" only: clear the focused field first (default false)
+   */
+  replace?: boolean;
 }
 ```
+
+`method: "type"` (the default) presses keys as on a US keyboard, so on other layouts such as French AZERTY it types the wrong characters (`mobiletest@example.com` becomes `,obiletest2exq,ple:co,`). Use `method: "paste"` for non-US keyboard layouts or non-ASCII text; it takes a few seconds per call instead of about 230 ms: about 2 s (about 5 s with `replace: true`) when iOS doesn't ask to allow pasting, and up to about 11 s when it does (seen on iOS 26.5 and 27). Tap the text field first: the text is pasted into the focused field through the simulator pasteboard, iOS's "Allow Paste" prompt is tapped for you, and the field is read back to confirm (for secure fields, only the length). The previous pasteboard text is restored afterwards (non-text content such as an image is not), unless the prompt is still on screen when the call gives up; then the text stays on the pasteboard and the error tells you to tap the allow button instead of retrying. `replace: true` clears the field first (e.g. after `"type"` produced wrong characters). Paste mode rejects empty text and newlines. It needs fb-idb 1.5.1+ and a recent idb_companion (1.1.8 lacks `--api axbridge`, so every paste fails with "No focused text field found"; `brew upgrade idb-companion`, then `idb kill`).
 
 ### `ui_swipe`
 
@@ -457,7 +467,7 @@ UI tools (`ui_describe_all`, `ui_tap`, `ui_view`, …) to validate it.
 - Node.js 20 or later
 - macOS (as iOS simulators are only available on macOS)
 - [Xcode](https://developer.apple.com/xcode/resources/) and iOS simulators installed
-- Facebook [IDB](https://fbidb.io/) tool [(see install guide)](https://fbidb.io/docs/installation)
+- Facebook [IDB](https://fbidb.io/) tool: the `idb_companion` binary plus the `fb-idb` Python client. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#2-installing-idb) for install steps, and [`ui_type`](#ui_type) for the versions `method: "paste"` needs
 
 ## Installation
 

@@ -659,7 +659,7 @@ async function confirmPaste(
   throw new Error(
     text === before
       ? "Cmd+V did not visibly change the focused text field, but the text equals its placeholder, so it may have been pasted: check the field before retrying."
-      : "Cmd+V did not change the focused text field. The field may not allow pasting.",
+      : "Cmd+V did not change the focused text field. The field may not allow pasting, or iOS may be waiting on its paste permission prompt, which Xcode 27's headless simulator never shows. Allow pasting for the app (its Paste from Other Apps setting) or use method \"type\".",
   );
 }
 

@@ -42,7 +42,7 @@ and show the run. Anything else is a finding — file it.
 2. In a text field (e.g. Settings search), tap the globe key until `xcrun simctl spawn <udid> defaults read com.apple.keyboard.preferences KeyboardLastUsed` shows `fr_FR@sw=AZERTY;hw=French` (dismiss any keyboard intro sheet first), then terminate and relaunch the app so it picks up the layout.
 3. Call `ui_type` with `text: "mobiletest@example.com"` and the default method; confirm via `ui_describe_all` that the field shows the wrong characters (`,obiletest2exq,ple:co,`).
 4. Call `ui_type` again with `method: "paste"` and `replace: true`; confirm the field contains exactly `mobiletest@example.com`. Clear the field (e.g. its clear button) and paste `"café déjà vu"` the same way without `replace`.
-5. Open Safari, tap the address bar, and call `ui_type` with `text: "http://localhost:8081"` and `method: "paste"`; confirm the "Allow Paste" prompt is accepted automatically and the address bar contains exactly that text.
+5. Open Safari, tap the address bar, and call `ui_type` with `text: "http://localhost:8081"` and `method: "paste"`; confirm the address bar contains exactly that text: the "Allow Paste" prompt is accepted automatically, or, on simulators that cannot show it (seen on iOS 27.2), the text is pasted through the field's edit menu. Repeat in a text field of a web page.
 6. Restore the keyboards: `xcrun simctl spawn <udid> defaults write -g AppleKeyboards -array "en_US@sw=QWERTY;hw=Automatic" "emoji@sw=Emoji"`.
 
 ## App lifecycle scenario (terminate_app, open_url, list_apps)

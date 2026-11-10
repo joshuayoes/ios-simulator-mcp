@@ -427,6 +427,7 @@ type AXElement = {
   type?: string;
   AXLabel?: string | null;
   AXValue?: string | null;
+  AXUniqueId?: string | null;
   traits?: string[];
   frame?: { x: number; y: number; width: number; height: number };
 };
@@ -436,8 +437,15 @@ const HID_KEYCODE_DELETE = "42";
 const HID_KEYCODE_SPACE = "44";
 const HID_KEYCODE_DOWN_ARROW = "81";
 const HID_KEYCODE_UP_ARROW = "82";
+const HID_KEYCODE_MENU = "101";
 
 const PASTE_TIMEOUT_MS = 3000;
+const EDIT_MENU_TIMEOUT_MS = 1500;
+// iOS rejects a tap on the Paste item while the menu is still animating in.
+const EDIT_MENU_SETTLE_MS = 1000;
+
+/** SF Symbols of the edit menu's Paste item (iOS 27, iOS 26): unlike its label, the same in every language. */
+const PASTE_SYMBOL_IDS = ["document.on.clipboard", "doc.on.clipboard"];
 
 // Without a UTF-8 locale, simctl pbcopy/pbpaste treat text as Mac Roman.
 const SIMCTL_PASTEBOARD_ENV = { LC_ALL: "en_US.UTF-8" };
@@ -466,6 +474,17 @@ async function pressKey(udid: string, code: string, ...modifiers: string[]) {
   return modifiers.length ? idbForPaste(...args) : idb(...args);
 }
 
+/** Taps a point given in screen points. */
+const tapPoint = (udid: string, x: number, y: number) =>
+  idb(
+    "ui",
+    "tap",
+    "--udid",
+    udid,
+    "--",
+    ...[x, y].map((n) => String(Math.round(n))),
+  );
+
 /** Sets the simulator clipboard text. */
 const pbcopy = (udid: string, text: string) =>
   run("xcrun", ["simctl", "pbcopy", udid], {
@@ -475,7 +494,7 @@ const pbcopy = (udid: string, text: string) =>
 
 /** axbridge sees fields the default reader misses (e.g. web content); IsEditing marks focus. */
 async function describeForTyping(udid: string): Promise<AXElement[]> {
-  const keys = ["type", "AXLabel", "AXValue", "traits", "frame"];
+  const keys = ["type", "AXLabel", "AXValue", "AXUniqueId", "traits", "frame"];
   const { stdout } = await idbForPaste(
     "ui",
     "describe-all",
@@ -593,6 +612,9 @@ function findAllowPasteButton(
 /** The paste may still happen later, so the clipboard must keep the text. */
 class PastePendingError extends Error {}
 
+/** Cmd+V changed nothing, so the edit menu's Paste item is worth trying. */
+class PasteIgnoredError extends Error {}
+
 const pastePending = (status: string, button: string) =>
   new PastePendingError(
     `iOS asks to allow pasting from CoreSimulatorBridge${status}. Tap ${button} to finish pasting (the clipboard still holds the text) instead of calling ui_type again.`,
@@ -605,7 +627,7 @@ async function confirmPaste(
   text: string,
   warnings: string[],
   exact: boolean,
-) {
+): Promise<string> {
   let taps = 0;
   let lastTap = 0;
   let deadline = Date.now() + PASTE_TIMEOUT_MS;
@@ -621,18 +643,19 @@ async function confirmPaste(
     if (allow?.frame) {
       if (Date.now() - lastTap < 1000) continue;
       const button = `"${allow.AXLabel}"`;
-      if (taps === 3 || finalRead) {
+      // A prompt first seen on the final read (after a slow read) still gets its tap.
+      if (taps === 3 || (finalRead && taps > 0)) {
         const tapped = taps
           ? ` (still showing after ${taps} tap${taps > 1 ? "s" : ""} on ${button})`
           : "";
         throw pastePending(tapped, button);
       }
       const f = allow.frame;
-      const center = [f.x + f.width / 2, f.y + f.height / 2].map(Math.round);
-      await idb("ui", "tap", "--udid", udid, "--", ...center.map(String));
+      await tapPoint(udid, f.x + f.width / 2, f.y + f.height / 2);
       taps++;
       lastTap = Date.now();
       deadline = lastTap + PASTE_TIMEOUT_MS;
+      finalRead = false;
       continue;
     }
     const field = focusedField(elements);
@@ -654,18 +677,149 @@ async function confirmPaste(
         `The field changed but doesn't contain exactly the typed text (the app may have reformatted it): ${JSON.stringify(after.slice(0, 200))}`,
       );
     }
-    return;
+    return after;
+  }
+  if (text === before) {
+    // A placeholder can't be told from content here, so retrying could paste twice.
+    throw new Error(
+      'Pasting did not visibly change the focused text field, whose content or placeholder already equals the text, so it may have been pasted: check the field before retrying (to paste over existing content, use replace: true; if the field is empty, use method "type").',
+    );
+  }
+  throw new PasteIgnoredError();
+}
+
+/**
+ * Opens the focused field's edit menu and returns its Paste item (none when the paste already
+ * went through or iOS's paste prompt showed up in the meantime) and whether the field was tapped.
+ */
+async function openEditMenuPaste(
+  udid: string,
+  before: string,
+): Promise<{ paste?: AXElement; tapped: boolean }> {
+  const lostFocus = () =>
+    new Error(
+      "The text field lost focus, so nothing was pasted: tap it and retry.",
+    );
+  const start = await describeForTyping(udid);
+  let field = focusedField(start);
+  if (!field) throw lostFocus();
+  const pasteHandled = (elements: AXElement[]) =>
+    findAllowPasteButton(elements) !== undefined ||
+    (focusedField(elements)?.AXValue ?? before) !== before;
+  if (pasteHandled(start)) return { tapped: false };
+  // The Paste item is the Button (native fields) or Cell (web fields) around its icon.
+  const findPaste = (elements: AXElement[]) => {
+    const index = elements.findIndex(
+      (e) => e.type === "Image" && PASTE_SYMBOL_IDS.includes(e.AXUniqueId!),
+    );
+    const icon = elements[index]?.frame;
+    if (!icon) return undefined;
+    const x = icon.x + icon.width / 2;
+    const y = icon.y + icon.height / 2;
+    const item = elements
+      .slice(0, index)
+      .reverse()
+      .find((e) => (e.type === "Button" || e.type === "Cell") && e.frame);
+    const f = item?.frame;
+    return f &&
+      x >= f.x &&
+      x <= f.x + f.width &&
+      y >= f.y &&
+      y <= f.y + f.height
+      ? item
+      : undefined;
+  };
+  /** Looks for the Paste item again once the menu has settled. */
+  const settled = async (elements: AXElement[]) => {
+    if (!findPaste(elements)) return { paste: undefined, elements };
+    await new Promise((resolve) => setTimeout(resolve, EDIT_MENU_SETTLE_MS));
+    elements = await describeForTyping(udid);
+    const paste = pasteHandled(elements) ? undefined : findPaste(elements);
+    return { paste, elements };
+  };
+  const waitForMenu = async () => {
+    const deadline = Date.now() + EDIT_MENU_TIMEOUT_MS;
+    for (;;) {
+      // The read started after the deadline is the final one.
+      const finalRead = Date.now() >= deadline;
+      const read = await settled(await describeForTyping(udid));
+      if (read.paste || finalRead || pasteHandled(read.elements)) return read;
+    }
+  };
+  // The edit menu may already be open (a tap on a focused field opens it). Otherwise the Menu
+  // key opens it in native fields; web fields ignore the key.
+  let { paste, elements } = await settled(start);
+  if (!paste && !pasteHandled(elements)) {
+    await pressKey(udid, HID_KEYCODE_MENU);
+    ({ paste, elements } = await waitForMenu());
+  }
+  // A tap on an already focused web field opens its edit menu, unless it moved the caret; then
+  // a second one does. Tapping the end of the first line stays clear of the keyboard.
+  for (let taps = 0; ; taps++) {
+    if (paste) return { paste, tapped: taps > 0 };
+    field = focusedField(elements);
+    if (!field) throw lostFocus();
+    const value = field.AXValue ?? "";
+    if (value !== before && taps > 0) {
+      throw new Error(
+        `Opening the edit menu with a tap changed the focused field, so nothing was pasted from the menu. It now contains ${JSON.stringify(value.slice(0, 200))}.`,
+      );
+    }
+    if (pasteHandled(elements)) return { tapped: taps > 0 };
+    const { frame } = field;
+    if (!frame || taps === 2) break;
+    await tapPoint(
+      udid,
+      frame.x + frame.width - Math.min(8, frame.width / 2),
+      frame.y + Math.min(22, frame.height / 2),
+    );
+    ({ paste, elements } = await waitForMenu());
   }
   throw new Error(
-    text === before
-      ? "Cmd+V did not visibly change the focused text field, but the text equals its placeholder, so it may have been pasted: check the field before retrying."
-      : "Cmd+V did not change the focused text field. The field may not allow pasting.",
+    'Cmd+V did not change the focused text field, and no edit menu with a Paste item opened. The field may not allow pasting; otherwise use method "type". If an edit menu is still open, tap app content outside it (not the keyboard) to close it.',
   );
 }
 
 /**
- * Pastes via the simulator pasteboard and Cmd+V, which unlike `idb ui text` works on any keyboard
- * layout, then restores the previous pasteboard text.
+ * Pastes with the edit menu's Paste item, which iOS allows without its paste permission prompt.
+ * Newer iOS 27 simulators cannot show that prompt, so there Cmd+V pastes nothing.
+ */
+async function pasteFromEditMenu(
+  udid: string,
+  before: string,
+  text: string,
+  warnings: string[],
+  exact: boolean,
+) {
+  const { paste, tapped } = await openEditMenuPaste(udid, before);
+  if (paste?.frame) {
+    const f = paste.frame;
+    await tapPoint(udid, f.x + f.width / 2, f.y + f.height / 2);
+  }
+  try {
+    const after = await confirmPaste(udid, before, text, warnings, exact);
+    if (
+      tapped &&
+      !isSecureValue(after) &&
+      after !== text &&
+      after !== before + text
+    ) {
+      warnings.push(
+        "A tap on the field opened its edit menu and may have moved the caret: check where the text landed.",
+      );
+    }
+  } catch (error) {
+    if (!(error instanceof PasteIgnoredError)) throw error;
+    throw new Error(
+      "Neither Cmd+V nor the edit menu's Paste item changed the focused text field. The field may not allow pasting. If its edit menu is still open, tap app content outside it (not the keyboard) to close it.",
+    );
+  }
+}
+
+/**
+ * Pastes via the simulator pasteboard and Cmd+V (or the edit menu's Paste item when Cmd+V does
+ * nothing), which unlike `idb ui text` works on any keyboard layout, then restores the previous
+ * pasteboard text.
  */
 async function pasteText(
   udid: string,
@@ -690,8 +844,23 @@ async function pasteText(
     await pbcopy(udid, text);
     let restoreClipboard = true;
     try {
+      // The simulator pasteboard can get stuck and silently keep its old content.
+      const copied = await run("xcrun", ["simctl", "pbpaste", udid], {
+        env: SIMCTL_PASTEBOARD_ENV,
+      });
+      if (copied.stdout.normalize() !== text.trim().normalize()) {
+        throw new Error(
+          'The simulator clipboard did not take the text, so nothing was pasted. Reboot the simulator (then run `idb kill`; if Xcode\'s Device Hub is open, quit it first), or use method "type".',
+        );
+      }
+      const before = field.AXValue ?? "";
       await pressKey(udid, HID_KEYCODE_V, "--command");
-      await confirmPaste(udid, field.AXValue ?? "", text, warnings, replace);
+      try {
+        await confirmPaste(udid, before, text, warnings, replace);
+      } catch (error) {
+        if (!(error instanceof PasteIgnoredError)) throw error;
+        await pasteFromEditMenu(udid, before, text, warnings, replace);
+      }
     } catch (error) {
       // Restoring now could let a late Allow tap paste the old clipboard.
       if (error instanceof PastePendingError) restoreClipboard = false;
@@ -732,7 +901,7 @@ if (!isToolFiltered("ui_type")) {
             .enum(["type", "paste"])
             .default("type")
             .describe(
-              '"type" (default): presses keys as on a US keyboard; printable ASCII only. "paste": use when the keyboard layout is not US (e.g. AZERTY, where "type" types wrong characters) or the text is non-ASCII; pastes into the focused field (tap it first), ~2-11 s',
+              '"type" (default): presses keys as on a US keyboard; printable ASCII only. "paste": use when the keyboard layout is not US (e.g. AZERTY, where "type" types wrong characters) or the text is non-ASCII; pastes into the focused field (tap it first), ~2-20 s',
             ),
           replace: z
             .boolean()

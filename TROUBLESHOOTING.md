@@ -76,6 +76,19 @@ Homebrew's Python refuses `pip install --user fb-idb` with `error: externally-ma
 - Ensure you have permission to write to the output path (e.g., for screenshots or recordings).
 - Try using a path in your home directory or `~/Downloads`.
 
+### `ui_type` with `method: "paste"` is slow or fails on newer iOS 27 simulators
+Some simulator runtimes (seen on iOS 27.2) cannot show iOS's "Allow Paste" prompt, so pasting with Cmd+V does nothing. The server then pastes with the Paste item of the field's edit menu, which takes about 8 to 13 s per call. If that fails too, or to make pasting faster:
+- Keep Xcode's Device Hub open and showing that simulator: Cmd+V then pastes without a prompt. (While Device Hub shows a different simulator, the clipboard of this one can get stuck; see below.)
+- Or allow pasting for the app in the simulator's privacy database (this edits simulator data directly; replace the UDID and bundle ID, and call `ui_type` with `method: "paste"` in the app once first, which creates the row; if the command prints `0`, the row does not exist yet):
+  ```sh
+  sqlite3 ~/Library/Developer/CoreSimulator/Devices/<udid>/data/Library/TCC/TCC.db \
+    "UPDATE access SET auth_value=2 WHERE service='kTCCServicePasteboard' AND client='<bundle id>'; SELECT changes()"
+  ```
+- Or use the default `method: "type"` when the text is printable ASCII and the keyboard layout is US.
+
+### `ui_type` with `method: "paste"` says the simulator clipboard did not take the text
+The simulator pasteboard can get stuck: `xcrun simctl pbcopy` succeeds but the clipboard keeps its old content. Reboot the simulator, then run `idb kill`. This was seen while Xcode's Device Hub was open and showing a different simulator, and rebooting alone did not help then: quit Device Hub (or have it show this simulator) before rebooting.
+
 ### Simulator UI Not Responding
 - Restart the simulator and try again.
 - Quit and relaunch Xcode if needed.

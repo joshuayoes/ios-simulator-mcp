@@ -1,0 +1,31 @@
+# Deterministic per-PR conformance gate (layer L1 of the eval roadmap, #82).
+#
+# No model, no simulator: every check here is a protocol-level assertion against
+# the real build over stdio, so it runs on ubuntu in seconds. Checks that need a
+# booted simulator belong in the release harness (TESTING.md), not here.
+#
+# EXPECTED_TOOL_COUNT is deliberately hard-coded: adding or removing a tool
+# should be a conscious edit to this file, not a silent drift.
+name: conformance gate
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: conformance-gate-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  EXPECTED_TOOL_COUNT: 17
+jobs:
+  conformance-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+      - run: npm ci
+      - run: npm run build
+      - run: ./scripts/conformance-gate.sh
